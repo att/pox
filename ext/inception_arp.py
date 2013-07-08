@@ -35,7 +35,7 @@ class ArpTable (object):
   """
   def __init__ (self):
     self.table = {}
-    self.table[]
+    # self.table[] #TODO: syntax error?!
 
   def Insert (self, key, value):
     self.table[key] = value
