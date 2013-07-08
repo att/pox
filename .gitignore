@@ -1,10 +1,6 @@
-doc/*
+# pox
+*~
 *.pem
-*.pyc
-*.pyo
-*.py~
-*.py.bak
-old.*
 *.patch
 *.rej
 *.diff
@@ -12,7 +8,31 @@ old.*
 *.swp
 *.pcap
 \#*\#
-*~
 pox/lib/pxpcap/pxpcap_c/build
 pox/lib/pxpcap/pxpcap_c/WpdPack
 pypy/
+
+# Python
+*.py[cod]
+
+# C extensions
+*.so
+
+# Packages
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+var
+sdist
+develop-eggs
+.installed.cfg
+lib
+lib64
+
+# Mr Developer
+.mr.developer.cfg
+.project
+.pydevproject
