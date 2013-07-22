@@ -24,8 +24,6 @@ Packet processing:
 """
 
 from pox.core import core
-# from pox.lib.addresses import EthAddr
-# from pox.lib.addresses import IPAddr
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.util import dpid_to_str
@@ -35,26 +33,22 @@ import time
 LOGGER = core.getLogger()
 
 
-# BOOTSTRAP_IP_TO_MAC_MAPPING = {
-#     "10.251.0.1": "f6:3e:73:1b:71:b3"
-# }
-
 class ArpEntry(object):
     """
     Entry in arp table: (MAC, Virtual switch ID, Lifetime)
     """
 
-    def __init__(self, mac=None, vsid=None, vsport=None, time=None):
+    def __init__(self, mac=None, vsid=None, vsport=None, timestamp=None):
         self.mac = mac
         self.vsid = vsid
         self.vsport = vsport
-        self._time = time
+        self._timestamp = timestamp
 
     def is_expired(self, lifetime):
-        return time.time() > (self._time + lifetime)
+        return time.time() > (self._timestamp + lifetime)
 
-    def update_time(self, new_time):
-        self._time = new_time
+    def update_timestamp(self, timestamp):
+        self._timestamp = timestamp
 
 
 class InceptionArp(object):
@@ -67,6 +61,7 @@ class InceptionArp(object):
 
     def __init__(self):
         core.openflow.addListeners(self)
+
         # Table arp_table stores mappings from IP address to MAC address
         self.arp_table = {}
 
@@ -83,17 +78,12 @@ class InceptionArp(object):
         # forwarding table during ARP request
         self.peer_port_table = {}
 
-        # for key, value in BOOTSTRAP_IP_TO_MAC_MAPPING.items():
-        #     ipaddr = IPAddr(key)
-        #     ethaddr = EthAddr(value)
-        #     self.arp_table[ipaddr] = ethaddr
-
-    def getIPByName(self, bridge_name):
+    def get_ip_by_name(self, port_name):
         """
         Parse the bridge name to get the IP address of remote rVM
         to which the bridge builds a VXLan.
         """
-        raw_tail_ip = bridge_name.split('_')[1]
+        raw_tail_ip = port_name.split('_')[1]
         tail_ip = raw_tail_ip.replace('-', '.')
         peer_ip = "10.2." + tail_ip
         return peer_ip
@@ -121,9 +111,9 @@ class InceptionArp(object):
             port_name = port.name
             # Only store the port connecting remote rVM
             if port_name.count('_') == 1:
-                peer_ip = self.getIPByName(port_name)
+                peer_ip = self.get_ip_by_name(port_name)
                 self.peer_port_table[(dpid, peer_ip)] = port.port_no
-                LOGGER.info("Port: from %s to %s via %s",\
+                LOGGER.info("Port: from %s to %s via %s",
                             dpid_to_str(dpid), peer_ip, port.port_no)
 
     def _handle_ConnectionDown(self, event):
@@ -135,7 +125,7 @@ class InceptionArp(object):
         # And delete all its port information
         for key in self.peer_port_table.keys():
             if dpid == key[0]:
-                LOGGER.info("Deleted: Port: from %s via %s",\
+                LOGGER.info("Deleted: Port: from %s via %s",
                             dpid_to_str(dpid), self.peer_port_table[key])
                 del self.peer_port_table[key]
 
@@ -169,7 +159,7 @@ class InceptionArp(object):
                             dpid_to_str(src_switch))
             else:
                 # Refresh the time if entry exists
-                self.arp_table[in_prot_src].update_time(time.time())
+                self.arp_table[in_prot_src].update_timestamp(time.time())
 
             # Processing an ARP request
             if arp_packet.opcode == arp.REQUEST:
@@ -185,16 +175,15 @@ class InceptionArp(object):
                     dst_mac = self.arp_table[in_prot_dst].mac
                     LOGGER.info("Fetch dpid: %s", dst_mac)
 
-                    arp_reply = arp()
-                    arp_reply.hwtype = arp_packet.hwtype
-                    arp_reply.prototype = arp_packet.prototype
-                    arp_reply.hwlen = arp_packet.hwlen
-                    arp_reply.protolen = arp_packet.protolen
-                    arp_reply.opcode = arp.REPLY
-                    arp_reply.hwdst = arp_packet.hwsrc
-                    arp_reply.protodst = in_prot_src
-                    arp_reply.protosrc = in_prot_dst
-                    arp_reply.hwsrc = dst_mac
+                    arp_reply = arp(hwtype=arp_packet.hwtype,
+                                    prototype=arp_packet.prototype,
+                                    hwlen=arp_packet.hwlen,
+                                    protolen=arp_packet.protolen,
+                                    opcode=arp.REPLY,
+                                    hwdst=arp_packet.hwsrc,
+                                    hwsrc=dst_mac,
+                                    protodst=in_prot_src,
+                                    protosrc=in_prot_dst)
                     LOGGER.info("ARP reply answering: %s with MAC of: %s",
                                 arp_reply.protodst, arp_reply.protosrc)
 
@@ -244,7 +233,6 @@ class InceptionArp(object):
                     # Only after the flow table in set on the switches
                     # will the ARP reply be returned to the host
                     event.connection.send(msg_arp_reply)
-
                     return
 
 
