@@ -4,6 +4,8 @@
 # into intercepting all ARP broadcast requests through it, while all
 # other traffic remains unaffected.
 
+# THE BASH SHOULD BE RUN UNDER SUPER USER
+
 # Connect the vs to the controller
 ovs-vsctl set-controller obr1 tcp:10.2.184.75:6633
 
