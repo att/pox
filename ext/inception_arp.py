@@ -1,97 +1,94 @@
-# This file describes centralized handling of ARP protocol of a controller
-# in inception cloud.
-
+"""ARP handling via SDN controller in Inception Cloud
 """
-The controller connects to all switches and process ARP requests
-on behalf of them.
 
-Date Structure:
-The controller stores three tables in itself:
-arp_table, mac_eth_table, peer_port_table.
-
-arp_table
-records the mapping from IP address to MAC address of end hosts
-for address resolution. In addition, it associates each entry
-with switch ID, port number and time columns, respectively
-representing the ID of the switch host is connected to,
-the port of the switch connected and lifespan of the entry for timeout.
-
-peer_port_table
-records the neighboring relationship between switches. It is mapping
-from data path ID(dpid) of a switch and IP address of neighboring rVM
-to port number. Its semantics is that each entry stands for connection
-between switches via some specific port. VXLan, however, only stores
-information of IP address of rVM in which neighbor switches lies.
-Rather than storing the mapping from dpid to dpid directly, we store
-mapping from dpid to IP address. With further look-up in mac_eth_table,
-the dpid to dpid mapping can be retrieved.
-
-mac_eth_table
-records the mapping from data path ID(dpid) of a switch to IP address
-of the rVM where it resides. This table is to facilitate the look-up
-of peer_port_table. As peer_port_table only stores mapping from dpid
-to IP address of rVM, while during forwarding, the controller only
-receives the dpid's of switches. The mac_eth_table will enable controller
-to convert the destination dpid to its corresponding IP address of rVM,
-thus enabling look-up of port number in table peer_port_table.
-
-"""
+import time
 
 from pox.core import core
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.util import dpid_to_str
 import pox.openflow.libopenflow_01 as of
-import time
 
 LOGGER = core.getLogger()
+
 IP_PREFIX = "10.2."
+
 FWD_PRIO = 15
+
+#timeout for ARP entries, in seconds
+ARP_LIFESPAN = 120
 
 
 class ArpEntry(object):
-    """
-    Entry in arp table: (MAC, Virtual switch ID, Lifetime)
-    """
+    """Arp entry"""
 
-    def __init__(self, mac=None, vsid=None, vsport=None,
-                 timestamp=None, lifespan=None):
+    def __init__(self, mac, vsid, vsport):
+        """
+        @param mac: MAC address
+        @param vsid: virtual switch ID
+        @param vsport: virtual switch port
+        """
         self.mac = mac
         self.vsid = vsid
         self.vsport = vsport
-        self._timestamp = timestamp
-        self._lifespan = lifespan
+        self._timestamp = time.time()
 
     def is_expired(self):
-        return time.time() > (self._timestamp + self._lifespan)
+        return time.time() > (self._timestamp + ARP_LIFESPAN)
 
-    def update_timestamp(self, timestamp):
-        self._timestamp = timestamp
+    def refresh(self):
+        self._timestamp = time.time()
 
 
 class InceptionArp(object):
     """
-    Inception network controller component for handling ARP request
+    Inception network controller component for handling ARP request.
+    The controller connects to all switches and process ARP requests
+    on behalf of them.
     """
 
-    # Timeout for ARP entries
-    arp_timeout = 60 * 2
-
     def __init__(self):
-        core.openflow.addListeners(self)
-
-        # arp_table: IP address -> ArpEntry
-        self.arp_table = {}
-
-        # mac_eth_table: dpid -> IP address
-        self.mac_eth_table = {}
-
-        # peer_port_table: (dpid, IP address) -> port
-        self.peer_port_table = {}
-
-    def get_ip_by_name(self, port_name):
         """
-        Parse the bridge name to get the IP address of remote rVM
+        The controller stores three tables:
+
+        ip_to_arp_table: records the mapping from IP address to MAC
+        address of end hosts for address resolution. In addition, it
+        associates each entry with switch ID, port number and time
+        columns, respectively representing the ID of the switch host is
+        connected to, the port of the switch connected and lifespan of the
+        entry for timeout.
+
+        dpid_ip_to_port_table: records the neighboring relationship
+        between switches. It is mapping from data path ID(dpid) of a
+        switch and IP address of neighboring rVM to port number. Its
+        semantics is that each entry stands for connection between
+        switches via some specific port. VXLan, however, only stores
+        information of IP address of rVM in which neighbor switches lies.
+        Rather than storing the mapping from dpid to dpid directly, we
+        store mapping from dpid to IP address. With further look-up in
+        dpid_to_ip_table, the dpid to dpid mapping can be retrieved.
+
+        dpid_to_ip_table: records the mapping from data path ID(dpid) of a
+        switch to IP address of the rVM where it resides. This table is to
+        facilitate the look-up of dpid_ip_to_port_table. As
+        dpid_ip_to_port_table only stores mapping from dpid to IP address
+        of rVM, while during forwarding, the controller only receives the
+        dpid's of switches. The dpid_to_ip_table will enable controller to
+        convert the destination dpid to its corresponding IP address of
+        rVM, thus enabling look-up of port number in table
+        dpid_ip_to_port_table.
+        """
+        core.openflow.addListeners(self)
+        # IP address -> ArpEntry
+        self.ip_to_arp_table = {}
+        # dpid -> IP address
+        self.dpid_to_ip_table = {}
+        # (dpid, IP address) -> port
+        self.dpid_ip_to_port_table = {}
+
+    def get_ip_by_port(self, port_name):
+        """
+        Parse the port name to get the IP address of remote rVM
         to which the bridge builds a VXLan.
         """
         raw_tail_ip = port_name.split('_')[1]
@@ -107,36 +104,35 @@ class InceptionArp(object):
         remote_ip, port = sock.getpeername()
 
         # If the entry corresponding to the MAC already exists
-        if dpid in self.mac_eth_table:
+        if dpid in self.dpid_to_ip_table:
             LOGGER.info("MAC address: %s already exists", dpid_to_str(dpid))
 
-        self.mac_eth_table[dpid] = remote_ip
+        self.dpid_to_ip_table[dpid] = remote_ip
         LOGGER.info("Mapping from: %s to: %s", dpid_to_str(dpid), remote_ip)
 
-        # Collect port information.
-        # Sift out ports connecting peer switches
-        # and store them in peer_port_table
+        # Collect port information.  Sift out ports connecting peer
+        # switches and store them in dpid_ip_to_port_table
         for port in switch_features.ports:
             port_name = port.name
             # Only store the port connecting remote rVM
             if port_name.count('_') == 1:
-                peer_ip = self.get_ip_by_name(port_name)
-                self.peer_port_table[(dpid, peer_ip)] = port.port_no
+                peer_ip = self.get_ip_by_port(port_name)
+                self.dpid_ip_to_port_table[(dpid, peer_ip)] = port.port_no
                 LOGGER.info("Port: from %s to %s via %s",
                             dpid_to_str(dpid), peer_ip, port.port_no)
 
     def _handle_ConnectionDown(self, event):
         dpid = event.dpid
-        # If the switch turns off connection,
-        # delete its mapping from MAC address to remote IP address
-        del self.mac_eth_table[dpid]
+        # If the switch turns off connection, delete its mapping from
+        # MAC address to remote IP address
+        del self.dpid_to_ip_table[dpid]
         LOGGER.info("Deleted: Mapping from: %s", dpid_to_str(dpid))
         # And delete all its port information
-        for key in self.peer_port_table.keys():
+        for key in self.dpid_ip_to_port_table.keys():
             if dpid == key[0]:
                 LOGGER.info("Deleted: Port: from %s via %s",
-                            dpid_to_str(dpid), self.peer_port_table[key])
-                del self.peer_port_table[key]
+                            dpid_to_str(dpid), self.dpid_ip_to_port_table[key])
+                del self.dpid_ip_to_port_table[key]
 
     def _handle_PacketIn(self, event):
         switch_inport = event.port
@@ -157,33 +153,30 @@ class InceptionArp(object):
             src_switch = event.dpid
 
             # Do source learning if possible
-            if in_prot_src not in self.arp_table:
-                self.arp_table[in_prot_src] = ArpEntry(arp_packet.hwsrc,
-                                                       src_switch,
-                                                       switch_inport,
-                                                       time.time(),
-                                                       InceptionArp.arp_timeout
-                                                       )
+            if in_prot_src not in self.ip_to_arp_table:
+                self.ip_to_arp_table[in_prot_src] = ArpEntry(arp_packet.hwsrc,
+                                                             src_switch,
+                                                             switch_inport)
                 LOGGER.info("Source learning: %s -> %s via switch: %s",
                             in_prot_src,
                             arp_packet.hwsrc,
                             dpid_to_str(src_switch))
             else:
                 # Refresh time stamp if entry exists
-                self.arp_table[in_prot_src].update_timestamp(time.time())
+                self.ip_to_arp_table[in_prot_src].refresh()
 
             # Processing an ARP request
             if arp_packet.opcode == arp.REQUEST:
                 LOGGER.info("This is ARP request from: %s querying: %s",
                             in_prot_src, in_prot_dst)
 
-                if in_prot_dst in self.arp_table:
+                if in_prot_dst in self.ip_to_arp_table:
                     # If the entry expires, delete (for now)
-                    if self.arp_table[in_prot_dst].is_expired():
-                        del self.arp_table[in_prot_dst]
+                    if self.ip_to_arp_table[in_prot_dst].is_expired():
+                        del self.ip_to_arp_table[in_prot_dst]
                         return
 
-                    dst_mac = self.arp_table[in_prot_dst].mac
+                    dst_mac = self.ip_to_arp_table[in_prot_dst].mac
                     LOGGER.info("Fetch dpid: %s", dst_mac)
 
                     arp_reply = arp(hwtype=arp_packet.hwtype,
@@ -214,13 +207,15 @@ class InceptionArp(object):
                     LOGGER.info("Packet out for switch to be sent on port: %i",
                                 switch_inport)
 
-                    # Set up flows on source switch and destination switch
-                    # This should be prior to ARP reply to the inquirer
+                    # Set up flows on source switch and destination
+                    # switch This should be prior to ARP reply to the
+                    # inquirer
 
                     # First, set up a flow at src switch
-                    dst_switch = self.arp_table[in_prot_dst].vsid
-                    dst_ip = self.mac_eth_table[dst_switch]
-                    src_fwd_port = self.peer_port_table[(src_switch, dst_ip)]
+                    dst_switch = self.ip_to_arp_table[in_prot_dst].vsid
+                    dst_ip = self.dpid_to_ip_table[dst_switch]
+                    src_fwd_port = self.dpid_ip_to_port_table[(src_switch,
+                                                               dst_ip)]
 
                     msg_src_flow = of.ofp_flow_mod()
                     msg_src_flow.priority = FWD_PRIO
@@ -230,7 +225,7 @@ class InceptionArp(object):
                     event.connection.send(msg_src_flow)
 
                     # Next, set up a flow at dst switch
-                    dst_fwd_port = self.arp_table[in_prot_dst].vsport
+                    dst_fwd_port = self.ip_to_arp_table[in_prot_dst].vsport
 
                     msg_dst_flow = of.ofp_flow_mod()
                     msg_dst_flow.priority = FWD_PRIO
