@@ -13,7 +13,7 @@ import pox.openflow.libopenflow_01 as of
 
 LOGGER = core.getLogger()
 
-IP_PREFIX = "10.2."
+IP_PREFIX = "10.2"
 
 FWD_PRIORITY = 15
 
@@ -82,17 +82,6 @@ class InceptionArp(object):
         # (dpid, IP address) -> port
         self.dpid_ip_to_port_table = {}
 
-    #TODO: staticmethod, fix hack
-    def get_ip_by_port(self, port_name):
-        """
-        Parse the port name to get the IP address of remote rVM
-        to which the bridge builds a VXLan.
-        """
-        raw_tail_ip = port_name.split('_')[1]
-        tail_ip = raw_tail_ip.replace('-', '.')
-        peer_ip = IP_PREFIX + tail_ip
-        return peer_ip
-
     def _handle_ConnectionUp(self, event):
         """
         Handle when a switch is connected
@@ -114,10 +103,14 @@ class InceptionArp(object):
         # Collect port information.  Sift out ports connecting peer
         # switches and store them in dpid_ip_to_port_table
         for port in switch_features.ports:
-            # Only store the port connecting remote rVM
-            # TODO: fix hack
-            if port.name.count('_') == 1:
-                peer_ip = self.get_ip_by_port(port.name)
+            # FIXME(changbl): Parse the port name to get the IP
+            # address of remote rVM to which the bridge builds a
+            # VXLAN. E.g., obr1_184-53 => IP_PREFIX.184.53. Only store
+            # the port connecting remote rVM.
+            if port.name.startswith('obr') and '_' in port.name:
+                _, ip_suffix = port.name.split('_')
+                ip_suffix = ip_suffix.replace('-', '.')
+                peer_ip = '.'.join((IP_PREFIX, ip_suffix))
                 self.dpid_ip_to_port_table[(switch_id, peer_ip)] = port.port_no
                 LOGGER.info("Add: (dpid=%s, peer_ip=%s) -> port=%s",
                             dpid_to_str(switch_id), peer_ip, port.port_no)
@@ -214,10 +207,6 @@ class InceptionArp(object):
                                     protosrc=arp_packet.protodst)
                     LOGGER.info("ARP reply: %s query %s",
                                 arp_reply.protodst, arp_reply.protosrc)
-                    # TODO (chenche): Currently the source address of
-                    # Ethernet packet is set to the destination of
-                    # query.  I doubt whether it should be the MAC of
-                    # controller
                     eth_reply = ethernet(type=ethernet.ARP_TYPE,
                                          src=arp_reply.hwsrc,
                                          dst=arp_reply.hwdst)
