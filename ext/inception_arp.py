@@ -1,4 +1,5 @@
-"""ARP handling via SDN controller in Inception Cloud
+"""
+ARP handling via SDN controller in Inception Cloud
 """
 
 import time
@@ -18,20 +19,20 @@ IP_PREFIX = "10.2"
 FWD_PRIORITY = 15
 
 #timeout for ARP entries, in seconds
-ARP_LIFESPAN = 60 * 2
+ARP_LIFESPAN = 60 * 15
 
 
 class ArpEntry(object):
     """Arp entry"""
 
-    def __init__(self, mac, vsid, vsport):
+    def __init__(self, mac, dpid, vsport):
         """
         @param mac: MAC address
-        @param vsid: virtual switch ID (dpid)
+        @param dpid: virtual switch ID (dpid)
         @param vsport: virtual switch port
         """
         self.mac = mac
-        self.vsid = vsid
+        self.dpid = dpid
         self.vsport = vsport
         self._timestamp = time.time()
 
@@ -42,8 +43,8 @@ class ArpEntry(object):
         self._timestamp = time.time()
 
     def __repr__(self):
-        return "ArpEntry(mac=%s, vsid=%s, vsport=%s, timestamp=%s" % (
-            self.mac, dpid_to_str(self.vsid), self.vsport,
+        return "ArpEntry(mac=%s, dpid=%s, vsport=%s, timestamp=%s" % (
+            self.mac, dpid_to_str(self.dpid), self.vsport,
             time.ctime(int(self._timestamp)))
 
 
@@ -81,6 +82,8 @@ class InceptionArp(object):
         self.dpid_to_ip_table = {}
         # (dpid, IP address) -> port
         self.dpid_ip_to_port_table = {}
+        # src_mac -> (packet_in event)
+        self.mac_to_event_table = {}
 
     def _handle_ConnectionUp(self, event):
         """
@@ -138,7 +141,7 @@ class InceptionArp(object):
         Handle when a packet is received
         """
         switch_id = event.dpid
-        switch_port = event.port
+        pkt_in_port = event.port
         eth_packet = event.parsed
 
         # If packet is not parsed properly, alert
@@ -148,37 +151,74 @@ class InceptionArp(object):
 
         # The ethernet packet carries ARP
         if eth_packet.type == ethernet.ARP_TYPE:
-            LOGGER.info("Receive Ethernet ARP packet from %s to %s",
-                        eth_packet.src, eth_packet.dst)
+            LOGGER.info("Ethernet ARP packet received")
             arp_packet = eth_packet.payload
             # Refresh time stamp if entry exists
             if arp_packet.protosrc in self.ip_to_arp_table:
                 self.ip_to_arp_table[arp_packet.protosrc].refresh()
+                LOGGER.info("Ip-mac mapping for %s refreshed",
+                            arp_packet.protosrc)
             # Otherwise, do source learning
             else:
-                arp_entry = ArpEntry(arp_packet.hwsrc, switch_id, switch_port)
+                arp_entry = ArpEntry(arp_packet.hwsrc, switch_id, pkt_in_port)
                 self.ip_to_arp_table[arp_packet.protosrc] = arp_entry
                 LOGGER.info("Add: source learning: %s -> %s",
                             arp_packet.protosrc, arp_entry)
+
+            # Process ARP reply
+            # Reply to ARP request buffered in the buffer list
+            if arp_packet.opcode == arp.REPLY:
+                LOGGER.info("ARP reply from %s", arp_packet.protosrc)
+                if arp_packet.hwdst in self.mac_to_event_table.keys():
+                    event_to_reply = self.mac_to_event_table[arp_packet.hwdst]
+                    event_to_reply.connection.send(of.ofp_packet_out(
+                            data=eth_packet.pack(),
+                            action=of.ofp_action_output(
+                                port=event_to_reply.port)))
+                    del self.mac_to_event_table[arp_packet.hwdst]
+                    LOGGER.info("Forward ARP reply from %s to %s in buffer",
+                                arp_packet.protosrc, arp_packet.protodst)
 
             # Process ARP request
             if arp_packet.opcode == arp.REQUEST:
                 LOGGER.info("ARP request: %s query: %s",
                             arp_packet.protosrc, arp_packet.protodst)
-                # if entry exists
-                if arp_packet.protodst in self.ip_to_arp_table:
-                    # If entry expires, delete it and return #TODO: refresh
-                    if self.ip_to_arp_table[arp_packet.protodst].is_expired():
-                        del self.ip_to_arp_table[arp_packet.protodst]
-                        return
-
+                if arp_packet.protodst not in self.ip_to_arp_table:
+                    # Entry not found, store the event and flood request
+                    LOGGER.info("Entry for %s not found, buffer request",
+                                arp_packet.protodst)
+                    self.mac_to_event_table[arp_packet.hwsrc] = event
+                    for conn in core.openflow.connections:
+                        conn_ports = conn.features.ports
+                        # Sift out ports connecting to hosts but vxlan peers
+                        host_ports = [port.port_no for port in conn_ports
+                                      if port.port_no not in
+                                      self.dpid_ip_to_port_table.values()]
+                        actions_out_ports = [of.ofp_action_output(port=hport)
+                                             for hport in host_ports]
+                        core.openflow.sendToDPID(conn.dpid, of.ofp_packet_out(
+                                data=eth_packet.pack(),
+                                action=actions_out_ports))
+                        LOGGER.info("Broadcast request")
+                elif self.ip_to_arp_table[arp_packet.protodst].is_expired():
+                    # If entry expires, send the request unicastly to dst
+                    LOGGER.info("Entry expires, unicast to %s",
+                                arp_packet.hwdst)
+                    unicast_dpid = (self.ip_to_arp_table[arp_packet.protodst].
+                                   dpid)
+                    unicast_port = (self.ip_to_arp_table[arp_packet.protodst].
+                                    vsport)
+                    core.openflow.sendToDPID(unicast_dpid, of.ofp_packet_out(
+                            data=eth_packet.pack(),
+                            action=of.ofp_action_output(port=unicast_port)))
+                else:
                     dst_mac = self.ip_to_arp_table[arp_packet.protodst].mac
                     LOGGER.info("Hit: dst_ip=%s, dst_mac=%s",
                                 arp_packet.protodst, dst_mac)
 
                     # Prepare to setup two flows
                     peer_switch_id = (self.ip_to_arp_table[arp_packet.protodst]
-                                      .vsid)
+                                      .dpid)
                     peer_ip = self.dpid_to_ip_table[peer_switch_id]
                     fwd_port = self.dpid_ip_to_port_table[(switch_id, peer_ip)]
                     peer_fwd_port = (self.ip_to_arp_table[arp_packet.protodst]
@@ -205,7 +245,8 @@ class InceptionArp(object):
                                     hwsrc=dst_mac,
                                     protodst=arp_packet.protosrc,
                                     protosrc=arp_packet.protodst)
-                    LOGGER.info("ARP reply: %s query %s",
+                    LOGGER.info("ARP reply from controller to %s \
+                                on behalf of %s",
                                 arp_reply.protodst, arp_reply.protosrc)
                     eth_reply = ethernet(type=ethernet.ARP_TYPE,
                                          src=arp_reply.hwsrc,
@@ -213,9 +254,9 @@ class InceptionArp(object):
                     eth_reply.payload = arp_reply
                     event.connection.send(of.ofp_packet_out(
                         data=eth_reply.pack(),
-                        action=of.ofp_action_output(port=switch_port)))
+                        action=of.ofp_action_output(port=pkt_in_port)))
                     LOGGER.info("Send ARP reply to host=%s on port: %s",
-                                arp_reply.protodst, switch_port)
+                                arp_reply.protodst, pkt_in_port)
 
 
 def launch():
