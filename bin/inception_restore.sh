@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# This script is to return all configurations of a switch
-# into traditional ones
+# This script is to restore all Inception configurations of Open
+# vSwitch to default
 
 BRIDGE_NAME=obr1
 
