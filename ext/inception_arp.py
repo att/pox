@@ -44,7 +44,7 @@ class ArpEntry(object):
 
 class InceptionArp(object):
     """
-    Inception cloud ARP module for handling ARP packets
+    Inception Cloud ARP module for handling ARP packets
     """
 
     def __init__(self, inception):
@@ -58,10 +58,14 @@ class InceptionArp(object):
         self.mac_to_event = {}
 
     def handle(self, event):
+        # process only if it is ARP packet
+        eth_packet = event.parsed
+        if eth_packet.type != ethernet.ARP_TYPE:
+            return
+
         LOGGER.info("Handle ARP packet")
         eth_packet = event.parsed
         arp_packet = eth_packet.payload
-
         # do source leraning
         self._do_source_learning(event)
         # Process ARP request
