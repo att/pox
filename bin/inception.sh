@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# This script is for configuring Open vSwitch to intercept all ARP
-# requests through it, while all other traffic remains unaffected.
-
-CONTROLLER_IP=10.2.184.75
+CONTROLLER_IP=10.2.184.43
 BRIDGE_NAME=obr1
-APR_PRIORITY=20
 NORMAL_PRIORITY=10
 
 # Connect the OVS to the controller
@@ -22,13 +18,6 @@ sudo ovs-vsctl set controller $BRIDGE_NAME connection-mode=out-of-band
 # functionality
 sudo ovs-vsctl set bridge $BRIDGE_NAME fail-mode=secure
 
-# Flush all existing flows
-sudo ovs-ofctl del-flows $BRIDGE_NAME
-
-# Flow 1 intercepts all ARP requests
-sudo ovs-ofctl add-flow $BRIDGE_NAME "table=0, dl_type=0x0806, \
-  priority=$APR_PRIORITY, actions=controller"
-
-# Flow 2 orders all other traffic to go as usual
+# Default flow
 sudo ovs-ofctl add-flow $BRIDGE_NAME "table=0, \
   priority=$NORMAL_PRIORITY, actions=NORMAL"
