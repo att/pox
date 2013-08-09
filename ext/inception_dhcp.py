@@ -17,18 +17,18 @@ class InceptionDhcp(object):
     """
     Inception Cloud DHCP module for handling DHCP packets
     """
-    def __init__(self, inception, svr_switch=None, svr_port=None):
+    def __init__(self, inception):
         """
-        @param svr_switch: the switch to which DHCP server connects
-        @param svr_switch: the port of switch on which DHCP server connects
+        @param server_switch: the switch to which DHCP server connects
+        @param server_switch: the port of switch on which DHCP server connects
         """
         self.inception = inception
-        self.svr_switch = svr_switch
-        self.svr_port = svr_port
+        self.server_switch = None
+        self.server_port = None
 
-    def update_server(self, switch, port):
-        self.svr_switch = switch
-        self.svr_port = port
+    def update(self, switch, port):
+        self.server_switch = switch
+        self.server_port = port
 
     def handle(self, event):
         # process only if it is DHCP packet
@@ -52,12 +52,12 @@ class InceptionDhcp(object):
         # connected to dhcp server and forward the packet
         if udp_packet.srcport == packet.dhcp.CLIENT_PORT:
             LOGGER.info("Forward DHCP message to DHCP server=%s", DHCP_SERVER)
-            if not self.svr_switch or not self.svr_port:
+            if not self.server_switch or not self.server_port:
                 LOGGER.warning("DHCP server has not been found!")
                 return
-            core.openflow.sendToDPID(self.svr_switch, of.ofp_packet_out(
+            core.openflow.sendToDPID(self.server_switch, of.ofp_packet_out(
                     data=eth_packet.pack(),
-                    action=of.ofp_action_output(port=self.svr_port)))
+                    action=of.ofp_action_output(port=self.server_port)))
         # A packet received from server. Find out the mac address
         # of the client and forward the packet to it.
         elif udp_packet.srcport == packet.dhcp.SERVER_PORT:
