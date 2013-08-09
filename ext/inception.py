@@ -25,9 +25,6 @@ class Inception(object):
     def __init__(self):
         core.openflow.addListeners(self)
         ## data stuctures
-        # MAC => (dpid, port): mapping from MAC address to (switch
-        # dpid, switch port) of end hosts
-        self.mac_to_dpid_port = {}
         # dpid -> IP address: records the mapping from switch dpid) to
         # IP address of the rVM where it resides. This table is to
         # facilitate the look-up of dpid_ip_to_port
@@ -43,6 +40,9 @@ class Inception(object):
         # dpid to IP address. With further look-up in dpid_to_ip, the
         # dpid to dpid mapping can be retrieved.
         self.dpid_ip_to_port = {}
+        # MAC => (dpid, port): mapping from MAC address to (switch
+        # dpid, switch port) of end hosts
+        self.mac_to_dpid_port = {}
         ## modules
         # ARP
         self.inception_arp = InceptionArp(self)
@@ -69,7 +69,7 @@ class Inception(object):
         # Collect port information.  Sift out ports connecting peer
         # switches and store them in dpid_ip_to_port
         for port in switch_features.ports:
-            # FIXME(changbl): Parse the port name to get the IP
+            # TODO(changbl): Parse the port name to get the IP
             # address of remote rVM to which the bridge builds a
             # VXLAN. E.g., obr1_184-53 => IP_PREFIX.184.53. Only store
             # the port connecting remote rVM.
@@ -129,19 +129,24 @@ class Inception(object):
             LOGGER.info("Learn: host=%s -> (switch=%s, port=%s)",
                         eth_packet.src, dpid_to_str(event.dpid), event.port)
 
-    def setup_fwd_flows(self, dst_mac, switch_id, fwd_port,
-                        peer_switch_id, peer_fwd_port):
+    def setup_fwd_flows(self, switch_id, dst_mac):
         """
-        Setup two flows for data forwarding, one on a switch, one on its peer
+        Given a switch and dst_mac address, setup two flows for data forwarding
+        on the switch and its peer switch if the two are not the same. If the
+        same, setup only one flow.
         """
-        # The first flow at switch
-        core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
-            match=of.ofp_match(dl_dst=dst_mac),
-            action=of.ofp_action_output(port=fwd_port),
-            priority=FWD_PRIORITY))
-        LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
-                    dpid_to_str(switch_id), dst_mac)
-        # The second flow at its peer switch
+        (peer_switch_id, peer_fwd_port) = self.mac_to_dpid_port[dst_mac]
+        peer_ip = self.dpid_to_ip[peer_switch_id]
+        # two switches are different, setup a first flow at switch
+        if switch_id != peer_switch_id:
+            fwd_port = self.dpid_ip_to_port[(switch_id, peer_ip)]
+            core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+                match=of.ofp_match(dl_dst=dst_mac),
+                action=of.ofp_action_output(port=fwd_port),
+                priority=FWD_PRIORITY))
+            LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
+                        dpid_to_str(switch_id), dst_mac)
+        # Setup flow at the peer switch
         core.openflow.sendToDPID(peer_switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_dst=dst_mac),
             action=of.ofp_action_output(port=peer_fwd_port),
