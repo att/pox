@@ -21,6 +21,7 @@ class InceptionArp(object):
         # of end hosts for address resolution
         self.ip_to_mac = {}
         # src_mac -> (packet_in event): records unanwsered ARP request events
+        # TODO(changbl): need to timeout un-anwsered events
         self.mac_to_event = {}
 
     def handle(self, event):
@@ -81,12 +82,7 @@ class InceptionArp(object):
             # setup data forwrading flows
             dst_mac = self.ip_to_mac[arp_packet.protodst]
             switch_id = event.dpid
-            (peer_switch_id, peer_fwd_port) = (self.inception.
-                                               mac_to_dpid_port[dst_mac])
-            peer_ip = self.inception.dpid_to_ip[peer_switch_id]
-            fwd_port = self.inception.dpid_ip_to_port[(switch_id, peer_ip)]
-            self.inception.setup_fwd_flows(dst_mac, switch_id, fwd_port,
-                                           peer_switch_id, peer_fwd_port)
+            self.inception.setup_fwd_flows(switch_id, dst_mac)
             # construct ARP reply packet and send it to the host
             LOGGER.info("Hit: dst_ip=%s, dst_mac=%s", arp_packet.protodst,
                         dst_mac)
@@ -118,14 +114,9 @@ class InceptionArp(object):
         if arp_packet.hwdst in self.mac_to_event.keys():
             event_to_reply = self.mac_to_event[arp_packet.hwdst]
             # setup data forwarding flows
-            dst_mac = arp_packet.hwsrc
             switch_id = event_to_reply.dpid
-            peer_switch_id = event.dpid
-            peer_ip = self.inception.dpid_to_ip[peer_switch_id]
-            fwd_port = self.inception.dpid_ip_to_port[(switch_id, peer_ip)]
-            peer_fwd_port = event.port
-            self.inception.setup_fwd_flows(dst_mac, switch_id, fwd_port,
-                                           peer_switch_id, peer_fwd_port)
+            dst_mac = arp_packet.hwsrc
+            self.inception.setup_fwd_flows(switch_id, dst_mac)
             # forwrad ARP reply
             event_to_reply.connection.send(of.ofp_packet_out(
                 data=eth_packet.pack(),
