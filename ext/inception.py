@@ -80,6 +80,9 @@ class Inception(object):
                 self.dpid_ip_to_port[(switch_id, peer_ip)] = port.port_no
                 LOGGER.info("Add: (switch=%s, peer_ip=%s) -> port=%s",
                             dpid_to_str(switch_id), peer_ip, port.port_no)
+            if 'dhcp' in port.name:
+                self.inception_dhcp.update_server(switch_id, port.port_no)
+                LOGGER.debug("A DHCP server found!")
 
     def _handle_ConnectionDown(self, event):
         """
