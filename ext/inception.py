@@ -4,6 +4,7 @@ Inception Cloud SDN controller
 
 from pox.core import core
 from pox.lib.util import dpid_to_str
+from pox.lib.packet.ethernet import ETHER_BROADCAST
 from pox import log
 from pox.log import color
 import pox.openflow.libopenflow_01 as of
@@ -15,6 +16,8 @@ LOGGER = core.getLogger()
 IP_PREFIX = "10.2"
 
 FWD_PRIORITY = 15
+HOST_BCAST_PRIORITY = 18
+SWITCH_BCAST_PRIORITY = 17
 
 
 class Inception(object):
@@ -40,9 +43,11 @@ class Inception(object):
         # dpid to IP address. With further look-up in dpid_to_ip, the
         # dpid to dpid mapping can be retrieved.
         self.dpid_ip_to_port = {}
-        # MAC => (dpid, port): mapping from MAC address to (switch
+        # MAC => (dpid, port): mapping from host MAC address to (switch
         # dpid, switch port) of end hosts
         self.mac_to_dpid_port = {}
+        # Store port information of each switch
+        self.dpid_to_ports = {}
         ## modules
         # ARP
         self.inception_arp = InceptionArp(self)
@@ -58,6 +63,8 @@ class Inception(object):
         connection = event.connection
         sock = connection.sock
         ip, port = sock.getpeername()
+        host_ports = []
+        all_ports = []
 
         # If the entry corresponding to the MAC already exists
         if switch_id in self.dpid_to_ip:
@@ -73,6 +80,7 @@ class Inception(object):
             # address of remote rVM to which the bridge builds a
             # VXLAN. E.g., obr1_184-53 => IP_PREFIX.184.53. Only store
             # the port connecting remote rVM.
+            all_ports.append(port.port_no)
             if port.name.startswith('obr') and '_' in port.name:
                 _, ip_suffix = port.name.split('_')
                 ip_suffix = ip_suffix.replace('-', '.')
@@ -80,26 +88,49 @@ class Inception(object):
                 self.dpid_ip_to_port[(switch_id, peer_ip)] = port.port_no
                 LOGGER.info("Add: (switch=%s, peer_ip=%s) -> port=%s",
                             dpid_to_str(switch_id), peer_ip, port.port_no)
-            if port.name == 'eth_dhcp':
+            elif port.name == 'eth_dhcp':
                 self.inception_dhcp.update_server(switch_id, port.port_no)
                 LOGGER.info("DHCP server is found!")
+            else:
+                # Store the port connecting local hosts
+                host_ports.append(port.port_no)
+
+        # Store the mapping from switch dpid to ports
+        self.dpid_to_ports[event.dpid] = all_ports
+
+        # Set up flow at the currently connected switch
+        # On receiving a broadcast message, the switch forwards
+        # it to all non-vxlan ports
+        broadcast_ports = [of.ofp_action_output(port=port_no)
+                          for port_no in host_ports]
+        core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+            match=of.ofp_match(dl_dst=ETHER_BROADCAST),
+            action=broadcast_ports,
+            priority=BCAST_PRIORITY))
 
     def _handle_ConnectionDown(self, event):
         """
         Handle when a switch turns off connection
         """
         switch_id = event.dpid
-        # Delete switch's mapping from MAC address to remote IP address
+        # Delete switch's mapping from switch dpid to remote IP address
         LOGGER.info("Del: switch=%s -> ip=%s", dpid_to_str(switch_id),
                     self.dpid_to_ip[switch_id])
         del self.dpid_to_ip[switch_id]
+
         # Delete all its port information
+        del self.dpid_to_ports[switch_id]
         for key in self.dpid_ip_to_port.keys():
             (dpid, ip) = key
             if switch_id == dpid:
                 LOGGER.info("Del: (switch=%s, peer_ip=%s) -> port=%s",
                             dpid_to_str(dpid), ip, self.dpid_ip_to_port[key])
                 del self.dpid_ip_to_port[key]
+
+        # Delete all connected hosts
+        for mac in self.mac_to_dpid_port.keys():
+            if self.mac_to_dpid_port[mac] == switch_id:
+                del self.mac_to_dpid_port[mac]
 
     def _handle_PacketIn(self, event):
         """
@@ -122,10 +153,21 @@ class Inception(object):
         """
         Learn MAC => (switch dpid, switch port) mapping from a packet,
         update self.mac_to_dpid_port table
+        set up flow table for forwarding broadcast message
         """
         eth_packet = event.parsed
         if eth_packet.src not in self.mac_to_dpid_port:
             self.mac_to_dpid_port[eth_packet.src] = (event.dpid, event.port)
+            # Set up broadcast flow when local hosts are sources
+            broadcast_ports = [of.ofp_action_output(port=port_no)
+                              for port_no in
+                              self.dpid_to_ports[event.dpid]
+                              if port_no != event.port]
+            core.openflow.sendToDPID(event.dpid, of.ofp_flow_mod(
+                match=of.ofp_match(dl_src=eth_packet.src,
+                                   dl_dst=ETHER_BROADCAST),
+                action=broadcast_ports,
+                priority=SRC_BCAST_PRIORITY))
             LOGGER.info("Learn: host=%s -> (switch=%s, port=%s)",
                         eth_packet.src, dpid_to_str(event.dpid), event.port)
 
