@@ -106,7 +106,7 @@ class Inception(object):
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_dst=ETHER_BROADCAST),
             action=broadcast_ports,
-            priority=BCAST_PRIORITY))
+            priority=SWITCH_BCAST_PRIORITY))
 
     def _handle_ConnectionDown(self, event):
         """
@@ -129,7 +129,8 @@ class Inception(object):
 
         # Delete all connected hosts
         for mac in self.mac_to_dpid_port.keys():
-            if self.mac_to_dpid_port[mac] == switch_id:
+            dpid, _ = self.mac_to_dpid_port[mac]
+            if dpid == switch_id:
                 del self.mac_to_dpid_port[mac]
 
     def _handle_PacketIn(self, event):
@@ -152,8 +153,8 @@ class Inception(object):
     def _do_source_learning(self, event):
         """
         Learn MAC => (switch dpid, switch port) mapping from a packet,
-        update self.mac_to_dpid_port table
-        set up flow table for forwarding broadcast message
+        update self.mac_to_dpid_port table. Also set up flow table for
+        forwarding broadcast message
         """
         eth_packet = event.parsed
         if eth_packet.src not in self.mac_to_dpid_port:
@@ -167,7 +168,7 @@ class Inception(object):
                 match=of.ofp_match(dl_src=eth_packet.src,
                                    dl_dst=ETHER_BROADCAST),
                 action=broadcast_ports,
-                priority=SRC_BCAST_PRIORITY))
+                priority=HOST_BCAST_PRIORITY))
             LOGGER.info("Learn: host=%s -> (switch=%s, port=%s)",
                         eth_packet.src, dpid_to_str(event.dpid), event.port)
 
