@@ -13,8 +13,6 @@ from ext.inception_dhcp import InceptionDhcp
 
 LOGGER = core.getLogger()
 
-IP_PREFIX = "10.2"
-
 FWD_PRIORITY = 15
 HOST_BCAST_PRIORITY = 18
 SWITCH_BCAST_PRIORITY = 17
@@ -25,7 +23,11 @@ class Inception(object):
     Inception cloud SDN controller
     """
 
-    def __init__(self):
+    def __init__(self, ip_prefix):
+        """
+        :param ip_prefix: X1.X2 in network's IP address X1.X2.X3.X4
+        """
+        self.ip_prefix = ip_prefix
         core.openflow.addListeners(self)
         ## data stuctures
         # dpid -> IP address: records the mapping from switch dpid) to
@@ -76,15 +78,15 @@ class Inception(object):
         # Collect port information.  Sift out ports connecting peer
         # switches and store them in dpid_ip_to_port
         for port in switch_features.ports:
-            # TODO(changbl): Parse the port name to get the IP
-            # address of remote rVM to which the bridge builds a
-            # VXLAN. E.g., obr1_184-53 => IP_PREFIX.184.53. Only store
+            # TODO(changbl): Parse the port name to get the IP address
+            # of remote rVM to which the bridge builds a VXLAN. E.g.,
+            # obr1_184-53 => ip_prefix.184.53. Only store
             # the port connecting remote rVM.
             all_ports.append(port.port_no)
             if port.name.startswith('obr') and '_' in port.name:
                 _, ip_suffix = port.name.split('_')
                 ip_suffix = ip_suffix.replace('-', '.')
-                peer_ip = '.'.join((IP_PREFIX, ip_suffix))
+                peer_ip = '.'.join((self.ip_prefix, ip_suffix))
                 self.dpid_ip_to_port[(switch_id, peer_ip)] = port.port_no
                 LOGGER.info("Add: (switch=%s, peer_ip=%s) -> port=%s",
                             dpid_to_str(switch_id), peer_ip, port.port_no)
@@ -198,10 +200,11 @@ class Inception(object):
                     dpid_to_str(peer_switch_id), dst_mac)
 
 
-def launch():
-    """ Register the component to core"""
+def launch(ip_prefix):
+    """ Register the component to core
+    """
     color.launch()
     log.launch(format="%(asctime)s - %(name)s - %(levelname)s - "
                "%(threadName)s - %(message)s")
-    core.registerNew(Inception)
+    core.registerNew(Inception, ip_prefix)
     LOGGER.info("InceptionArp is started...")
