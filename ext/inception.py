@@ -13,9 +13,12 @@ from ext.inception_dhcp import InceptionDhcp
 
 LOGGER = core.getLogger()
 
-FWD_PRIORITY = 15
+ARP_PRIORITY = 20
+DHCP_PRIORITY = 19
 HOST_BCAST_PRIORITY = 18
 SWITCH_BCAST_PRIORITY = 17
+FWD_PRIORITY = 15
+NORMAL_PRIORITY = 10
 
 
 class Inception(object):
@@ -71,9 +74,10 @@ class Inception(object):
         # If the entry corresponding to the MAC already exists
         if switch_id in self.dpid_to_ip:
             LOGGER.info("switch=%s already connected", dpid_to_str(switch_id))
-        else:
-            self.dpid_to_ip[switch_id] = ip
-            LOGGER.info("Add: switch=%s -> ip=%s", dpid_to_str(switch_id), ip)
+            return
+
+        self.dpid_to_ip[switch_id] = ip
+        LOGGER.info("Add: switch=%s -> ip=%s", dpid_to_str(switch_id), ip)
 
         # Collect port information.  Sift out ports connecting peer
         # switches and store them in dpid_ip_to_port
@@ -96,19 +100,36 @@ class Inception(object):
             else:
                 # Store the port connecting local hosts
                 host_ports.append(port.port_no)
-
         # Store the mapping from switch dpid to ports
         self.dpid_to_ports[event.dpid] = all_ports
+
+        # Intercepts all ARP packets and send them to the controller
+        core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+            match=of.ofp_match(dl_type=0x0806),
+            action=of.ofp_action_output(port=of.OFPP_CONTROLLER),
+            priority=ARP_PRIORITY))
+
+        # Intercepts DHCP packets and send them to the controller
+        core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+            match=of.ofp_match(dl_type=0x0800, nw_proto=17, tp_src=68),
+            action=of.ofp_action_output(port=of.OFPP_CONTROLLER),
+            priority=DHCP_PRIORITY))
 
         # Set up flow at the currently connected switch
         # On receiving a broadcast message, the switch forwards
         # it to all non-vxlan ports
+        # TODO(chenche): need to setup more flows for new hosts in the future
         broadcast_ports = [of.ofp_action_output(port=port_no)
                           for port_no in host_ports]
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_dst=ETHER_BROADCAST),
             action=broadcast_ports,
             priority=SWITCH_BCAST_PRIORITY))
+
+        # Default flows: Process via normal L2/L3 legacy switch configuration
+        core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+            action=of.ofp_action_output(port=of.OFPP_NORMAL),
+            priority=NORMAL_PRIORITY))
 
     def _handle_ConnectionDown(self, event):
         """
