@@ -10,15 +10,9 @@ from pox.log import color
 import pox.openflow.libopenflow_01 as of
 from ext.inception_arp import InceptionArp
 from ext.inception_dhcp import InceptionDhcp
+from ext import priority
 
 LOGGER = core.getLogger()
-
-ARP_PRIORITY = 20
-DHCP_PRIORITY = 19
-HOST_BCAST_PRIORITY = 18
-SWITCH_BCAST_PRIORITY = 17
-FWD_PRIORITY = 15
-NORMAL_PRIORITY = 10
 
 
 class Inception(object):
@@ -107,13 +101,13 @@ class Inception(object):
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_type=0x0806),
             action=of.ofp_action_output(port=of.OFPP_CONTROLLER),
-            priority=ARP_PRIORITY))
+            priority=priority.ARP))
 
         # Intercepts DHCP packets and send them to the controller
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_type=0x0800, nw_proto=17, tp_src=68),
             action=of.ofp_action_output(port=of.OFPP_CONTROLLER),
-            priority=DHCP_PRIORITY))
+            priority=priority.DHCP))
 
         # Set up flow at the currently connected switch
         # On receiving a broadcast message, the switch forwards
@@ -124,12 +118,12 @@ class Inception(object):
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             match=of.ofp_match(dl_dst=ETHER_BROADCAST),
             action=broadcast_ports,
-            priority=SWITCH_BCAST_PRIORITY))
+            priority=priority.SWITCH_BCAST))
 
         # Default flows: Process via normal L2/L3 legacy switch configuration
         core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
             action=of.ofp_action_output(port=of.OFPP_NORMAL),
-            priority=NORMAL_PRIORITY))
+            priority=priority.NORMAL))
 
     def _handle_ConnectionDown(self, event):
         """
@@ -191,34 +185,9 @@ class Inception(object):
                 match=of.ofp_match(dl_src=eth_packet.src,
                                    dl_dst=ETHER_BROADCAST),
                 action=broadcast_ports,
-                priority=HOST_BCAST_PRIORITY))
+                priority=priority.HOST_BCAST))
             LOGGER.info("Learn: host=%s -> (switch=%s, port=%s)",
                         eth_packet.src, dpid_to_str(event.dpid), event.port)
-
-    def setup_fwd_flows(self, switch_id, dst_mac):
-        """
-        Given a switch and dst_mac address, setup two flows for data forwarding
-        on the switch and its peer switch if the two are not the same. If the
-        same, setup only one flow.
-        """
-        (peer_switch_id, peer_fwd_port) = self.mac_to_dpid_port[dst_mac]
-        peer_ip = self.dpid_to_ip[peer_switch_id]
-        # two switches are different, setup a first flow at switch
-        if switch_id != peer_switch_id:
-            fwd_port = self.dpid_ip_to_port[(switch_id, peer_ip)]
-            core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
-                match=of.ofp_match(dl_dst=dst_mac),
-                action=of.ofp_action_output(port=fwd_port),
-                priority=FWD_PRIORITY))
-            LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
-                        dpid_to_str(switch_id), dst_mac)
-        # Setup flow at the peer switch
-        core.openflow.sendToDPID(peer_switch_id, of.ofp_flow_mod(
-            match=of.ofp_match(dl_dst=dst_mac),
-            action=of.ofp_action_output(port=peer_fwd_port),
-            priority=FWD_PRIORITY))
-        LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
-                    dpid_to_str(peer_switch_id), dst_mac)
 
 
 def launch(ip_prefix):

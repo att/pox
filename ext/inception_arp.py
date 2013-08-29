@@ -5,7 +5,9 @@ Inception Cloud ARP module
 from pox.core import core
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet
+from pox.lib.util import dpid_to_str
 import pox.openflow.libopenflow_01 as of
+from ext import priority
 
 LOGGER = core.getLogger()
 
@@ -78,7 +80,7 @@ class InceptionArp(object):
             # setup data forwrading flows
             dst_mac = self.ip_to_mac[arp_packet.protodst]
             switch_id = event.dpid
-            self.inception.setup_fwd_flows(switch_id, dst_mac)
+            self._setup_data_fwd_flows(switch_id, dst_mac)
             # construct ARP reply packet and send it to the host
             LOGGER.info("Hit: dst_ip=%s, dst_mac=%s", arp_packet.protodst,
                         dst_mac)
@@ -111,10 +113,36 @@ class InceptionArp(object):
             switch_id, port = self.inception.mac_to_dpid_port[arp_packet.hwdst]
             # setup data forwarding flows
             dst_mac = arp_packet.hwsrc
-            self.inception.setup_fwd_flows(switch_id, dst_mac)
+            self._setup_data_fwd_flows(switch_id, dst_mac)
             # forwrad ARP reply
             core.openflow.sendToDPID(switch_id, of.ofp_packet_out(
                 data=eth_packet.pack(),
                 action=of.ofp_action_output(port=port)))
             LOGGER.info("Forward ARP reply from ip=%s to ip=%s in buffer",
                         arp_packet.protosrc, arp_packet.protodst)
+
+    def _setup_data_fwd_flows(self, switch_id, dst_mac):
+        """
+        Given a switch and dst_mac address, setup two flows for data forwarding
+        on the switch and its peer switch if the two are not the same. If the
+        same, setup only one flow.
+        """
+        (peer_switch_id, peer_fwd_port) = (self.inception.
+                                           mac_to_dpid_port[dst_mac])
+        peer_ip = self.inception.dpid_to_ip[peer_switch_id]
+        # two switches are different, setup a first flow at switch
+        if switch_id != peer_switch_id:
+            fwd_port = self.inception.dpid_ip_to_port[(switch_id, peer_ip)]
+            core.openflow.sendToDPID(switch_id, of.ofp_flow_mod(
+                match=of.ofp_match(dl_dst=dst_mac),
+                action=of.ofp_action_output(port=fwd_port),
+                priority=priority.DATA_FWD))
+            LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
+                        dpid_to_str(switch_id), dst_mac)
+        # Setup flow at the peer switch
+        core.openflow.sendToDPID(peer_switch_id, of.ofp_flow_mod(
+            match=of.ofp_match(dl_dst=dst_mac),
+            action=of.ofp_action_output(port=peer_fwd_port),
+            priority=priority.DATA_FWD))
+        LOGGER.info("Setup forward flow on switch=%s for dst_mac=%s",
+                    dpid_to_str(peer_switch_id), dst_mac)
