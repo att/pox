@@ -20,9 +20,6 @@ class InceptionArp(object):
         # IP address -> MAC address: mapping from IP address to MAC address
         # of end hosts for address resolution
         self.ip_to_mac = {}
-        # src_mac -> (packet_in event): records unanwsered ARP request events
-        # TODO(changbl): need to timeout un-anwsered events
-        self.mac_to_event = {}
 
     def handle(self, event):
         # process only if it is ARP packet
@@ -65,7 +62,6 @@ class InceptionArp(object):
         if arp_packet.protodst not in self.ip_to_mac:
             LOGGER.info("Entry for %s not found, buffer and broadcast request",
                         arp_packet.protodst)
-            self.mac_to_event[arp_packet.hwsrc] = event
             for conn in core.openflow.connections:
                 conn_ports = conn.features.ports
                 # Sift out ports connecting to hosts but vxlan peers
@@ -110,17 +106,15 @@ class InceptionArp(object):
         arp_packet = eth_packet.payload
         LOGGER.info("ARP reply: ip=%s answer ip=%s", arp_packet.protosrc,
                     arp_packet.protodst)
-        # if prevoiusly someone sent a ARP request for the destination
-        if arp_packet.hwdst in self.mac_to_event.keys():
-            event_to_reply = self.mac_to_event[arp_packet.hwdst]
+        # if I know to whom to forward back this ARP reply
+        if arp_packet.hwdst in self.inception.mac_to_dpid_port:
+            switch_id, port = self.inception.mac_to_dpid_port[arp_packet.hwdst]
             # setup data forwarding flows
-            switch_id = event_to_reply.dpid
             dst_mac = arp_packet.hwsrc
             self.inception.setup_fwd_flows(switch_id, dst_mac)
             # forwrad ARP reply
-            event_to_reply.connection.send(of.ofp_packet_out(
+            core.openflow.sendToDPID(switch_id, of.ofp_packet_out(
                 data=eth_packet.pack(),
-                action=of.ofp_action_output(port=event_to_reply.port)))
-            del self.mac_to_event[arp_packet.hwdst]
+                action=of.ofp_action_output(port=port)))
             LOGGER.info("Forward ARP reply from ip=%s to ip=%s in buffer",
                         arp_packet.protosrc, arp_packet.protodst)
