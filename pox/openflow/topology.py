@@ -188,7 +188,7 @@ class OpenFlowSwitch (EventMixin, Switch):
     self._listeners = []
     self._reconnectTimeout = None # Timer for reconnection
     self._xid_generator = xid_generator( ((dpid & 0x7FFF) << 16) + 1)
-
+    
   def _setConnection (self, connection, ofp=None):
     ''' ofp - a FeaturesReply message '''
     if self._connection: self._connection.removeListeners(self._listeners)
@@ -286,6 +286,7 @@ class OpenFlowSwitch (EventMixin, Switch):
 
   def __repr__ (self):
     return "<%s %s>" % (self.__class__.__name__, dpidToStr(self.dpid))
+    #+ (" %s"*len(self.ports)) % tuple([(k,str(self.ports[k])) for k in self.ports.keys()])
 
   @property
   def name(self):

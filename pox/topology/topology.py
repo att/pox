@@ -130,6 +130,11 @@ class Entity (object):
     Entity._all_ids.add(id)
     self.id = id
 
+  def __gt__(self,other):
+    if not isinstance(other,Entity):
+      return Exception("Uncomparable types")
+    return str(self.id)<str(other)
+
   def serialize(self):
     return pickle.dumps(self, protocol = 0)
 
@@ -144,6 +149,9 @@ class Host (Entity):
   def __init__(self,id=None):
     Entity.__init__(self, id)
 
+  def __repr__(self):
+   return "<%s %s>" % (self.__class__.__name__, str(self.id))
+ 
 class Switch (Entity):
   """
   Subclassed by protocol-specific switch classes,
@@ -179,7 +187,6 @@ class Topology (EventMixin):
     HostLeave,
     EntityJoin,
     EntityLeave,
-
     Update
   ]
 
@@ -195,7 +202,8 @@ class Topology (EventMixin):
     # already occurred, we promise to re-issue them to the newly joined
     # client.
     self._event_promises = {
-      SwitchJoin : self._fulfill_SwitchJoin_promise
+      SwitchJoin : self._fulfill_SwitchJoin_promise,
+      HostJoin : self._fulfill_HostJoin_promise
     }
 
   def getEntityByID (self, ID, fail=False):
@@ -300,6 +308,11 @@ class Topology (EventMixin):
     """ Trigger the SwitchJoin handler for all pre-existing switches """
     for switch in self.getEntitiesOfType(Switch, True):
       handler(SwitchJoin(switch))
+
+  # added
+  def _fulfill_HostJoin_promise(self,handler):
+    for host in self.getEntitiesOfType(Host,True):
+      handler(HostJoin(host))
 
   def __len__(self):
     return len(self._entities)
