@@ -1,20 +1,17 @@
 # Copyright 2011,2012,2013 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -26,8 +23,8 @@
 
 import struct
 
-from packet_base import packet_base
-from packet_utils import ethtype_to_str
+from .packet_base import packet_base
+from .packet_utils import ethtype_to_str
 
 from pox.lib.addresses import *
 
@@ -53,8 +50,10 @@ class ethernet(packet_base):
   VLAN_TYPE  = 0x8100
   LLDP_TYPE  = 0x88cc
   PAE_TYPE   = 0x888e           # 802.1x Port Access Entity
-  MPLS_UNICAST_TYPE = 0x8847
-  MPLS_MULTICAST_TYPE = 0x8848
+  #MPLS_UNICAST_TYPE = 0x8847
+  #MPLS_MULTICAST_TYPE = 0x8848
+  MPLS_TYPE  = 0x8847
+  MPLS_MC_TYPE = 0x8848         # Multicast
   IPV6_TYPE  = 0x86dd
   PPP_TYPE   = 0x880b
   LWAPP_TYPE = 0x88bb
@@ -76,21 +75,23 @@ class ethernet(packet_base):
     packet_base.__init__(self)
 
     if len(ethernet.type_parsers) == 0:
-      from vlan import vlan
+      from .vlan import vlan
       ethernet.type_parsers[ethernet.VLAN_TYPE] = vlan
-      from arp  import arp
+      from .arp  import arp
       ethernet.type_parsers[ethernet.ARP_TYPE]  = arp
       ethernet.type_parsers[ethernet.RARP_TYPE] = arp
-      from ipv4 import ipv4
+      from .ipv4 import ipv4
       ethernet.type_parsers[ethernet.IP_TYPE]   = ipv4
-      from lldp import lldp
+      from .ipv6 import ipv6
+      ethernet.type_parsers[ethernet.IPV6_TYPE] = ipv6
+      from .lldp import lldp
       ethernet.type_parsers[ethernet.LLDP_TYPE] = lldp
-      from eapol import eapol
+      from .eapol import eapol
       ethernet.type_parsers[ethernet.PAE_TYPE]  = eapol
-      from mpls import mpls
-      ethernet.type_parsers[ethernet.MPLS_UNICAST_TYPE] = mpls
-      ethernet.type_parsers[ethernet.MPLS_MULTICAST_TYPE] = mpls
-      from llc import llc
+      from .mpls import mpls
+      ethernet.type_parsers[ethernet.MPLS_TYPE] = mpls
+      ethernet.type_parsers[ethernet.MPLS_MC_TYPE] = mpls
+      from .llc import llc
       ethernet._llc = llc
 
     self.prev = prev
@@ -108,6 +109,7 @@ class ethernet(packet_base):
 
   def parse (self, raw):
     assert isinstance(raw, bytes)
+    self.next = None # In case of unfinished parsing
     self.raw = raw
     alen = len(raw)
     if alen < ethernet.MIN_LEN:

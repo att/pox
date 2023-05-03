@@ -1,20 +1,17 @@
 /*************************************************************************
-Copyright 2011 James McCauley
+Copyright 2011,2013,2020 James McCauley
 
-This file is part of POX.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
 
-POX is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-POX is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with POX.  If not, see <http://www.gnu.org/licenses/>.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 **************************************************************************/
 
 /*
@@ -25,7 +22,13 @@ Do the tough stuff in Python.
 Don't think it can be done in ctypes because of how it
 releases and reacquires the GIL for callbacks.
 
+---
+
+Currently assumes longs can hold a pointer.  We should
+check this.
+
 */
+
 
 #include <Python.h>
 #ifdef WIN32
@@ -121,6 +124,10 @@ bool macForName (char * name, char * mac)
 }
 #endif
 
+static inline PyObject * none_ref (void)
+{
+  Py_RETURN_NONE;
+}
 
 static PyObject * p_findalldevs (PyObject *self, PyObject *args)
 {
@@ -142,38 +149,46 @@ static PyObject * p_findalldevs (PyObject *self, PyObject *args)
     PyObject * addrs = PyList_New(0);
     for (pcap_addr_t * a = d->addresses; a != NULL; a = a->next)
     {
+      if (a->addr == NULL)
+      {
+        // No idea what to do with this entry!
+        continue;
+      }
       if (a->addr->sa_family == AF_INET)
       {
         // Assume all members for this entry are AF_INET...
-        // Code below is sort of hilarious
-        char vd[6];
-        vd[0] = 's';
-        vd[5] = 0;
-        vd[1] = a->addr ? 'i' : 'O';
-        vd[2] = a->netmask ? 'i' : 'O';
-        vd[3] = a->broadaddr ? 'i' : 'O';
-        vd[4] = a->dstaddr ? 'i' : 'O';
-        PyObject * addr_entry = Py_BuildValue(vd,
-          "AF_INET",
-          a->addr ? (PyObject*)((sockaddr_in*)a->addr)->sin_addr.s_addr : Py_None,
-          a->netmask ? (PyObject*)((sockaddr_in*)a->netmask)->sin_addr.s_addr : Py_None,
-          a->broadaddr ? (PyObject*)((sockaddr_in*)a->broadaddr)->sin_addr.s_addr : Py_None,
-          a->dstaddr ? (PyObject*)((sockaddr_in*)a->dstaddr)->sin_addr.s_addr : Py_None);
+        PyObject * e1 = a->addr      ? Py_BuildValue("i", ((sockaddr_in*)a->addr)->sin_addr.s_addr)      : none_ref();
+        PyObject * e2 = a->netmask   ? Py_BuildValue("i", ((sockaddr_in*)a->netmask)->sin_addr.s_addr)   : none_ref();
+        PyObject * e3 = a->broadaddr ? Py_BuildValue("i", ((sockaddr_in*)a->broadaddr)->sin_addr.s_addr) : none_ref();
+        PyObject * e4 = a->dstaddr   ? Py_BuildValue("i", ((sockaddr_in*)a->dstaddr)->sin_addr.s_addr)   : none_ref();
+        PyObject * addr_entry = Py_BuildValue("sNNNN", "AF_INET", e1, e2, e3, e4);
+
         PyList_Append(addrs, addr_entry);
         Py_DECREF(addr_entry);
       }
+#ifdef IPPROTO_IPV6
       else if (a->addr->sa_family == AF_INET6)
       {
-        //TODO
+        #define GET_INET6(__f) (__f ? Py_BuildValue("y#", ((sockaddr_in6*)a->addr)->sin6_addr.s6_addr, 16) : none_ref())
+        PyObject * addr_entry = Py_BuildValue("sNNNN",
+          "AF_INET6",
+          GET_INET6(a->addr),
+          GET_INET6(a->netmask),
+          GET_INET6(a->broadaddr),
+          GET_INET6(a->dstaddr));
+
+        PyList_Append(addrs, addr_entry);
+        Py_DECREF(addr_entry);
       }
+#endif
 #ifdef AF_LINK_SOCKETS
       else if (a->addr->sa_family == AF_LINK)
       {
         #define GET_ADDR(__f) a->__f ? (((sockaddr_dl*)a->__f)->sdl_data + ((sockaddr_dl*)a->__f)->sdl_nlen) : "", a->__f ? ((sockaddr_dl*)a->__f)->sdl_alen : 0
-        PyObject * epo = Py_BuildValue("ss#", "ethernet", GET_ADDR(addr));
+        PyObject * epo = Py_BuildValue("sy#", "ethernet", GET_ADDR(addr));
         PyList_Append(addrs, epo);
         Py_DECREF(epo);
-        PyObject * addr_entry = Py_BuildValue("ss#s#s#s#",
+        PyObject * addr_entry = Py_BuildValue("sy#y#y#y#",
           "AF_LINK",
           GET_ADDR(addr),
           GET_ADDR(netmask),
@@ -191,7 +206,7 @@ static PyObject * p_findalldevs (PyObject *self, PyObject *args)
         struct sockaddr_ll * dll = (struct sockaddr_ll *)a->addr;
         if (dll->sll_hatype == ARPHRD_ETHER && dll->sll_halen == 6)
         {
-          PyObject * epo = Py_BuildValue("ss#", "ethernet", dll->sll_addr, 6);
+          PyObject * epo = Py_BuildValue("sy#", "ethernet", dll->sll_addr, 6);
           PyList_Append(addrs, epo);
           Py_DECREF(epo);
         }
@@ -208,7 +223,7 @@ static PyObject * p_findalldevs (PyObject *self, PyObject *args)
       char mac[6];
       if (macForName(d->name, mac))
       {
-        PyObject * epo = Py_BuildValue("ss#", "ethernet", mac, 6);
+        PyObject * epo = Py_BuildValue("sy#", "ethernet", mac, 6);
         PyList_Append(addrs, epo);
         Py_DECREF(epo);
       }
@@ -261,6 +276,23 @@ static PyObject * p_open_live (PyObject *self, PyObject *args)
   return Py_BuildValue("l", (long)ppcap);
 }
 
+static PyObject * p_get_selectable_fd (PyObject *self, PyObject *args)
+{
+#ifdef HAVE_PCAP_GET_SELECTABLE_FD
+  pcap_t * ppcap;
+  int rv;
+  if (!PyArg_ParseTuple(args, "l", &ppcap)) return NULL;
+
+  rv = pcap_get_selectable_fd(ppcap);
+
+  return Py_BuildValue("i", rv);
+#else
+  PyErr_SetString(PyExc_RuntimeError, "Selectable FD not supported");
+  return NULL;
+  //return Py_BuildValue("i", -1);
+#endif
+}
+
 struct thread_state
 {
   pcap_t * ppcap;
@@ -268,16 +300,37 @@ struct thread_state
   PyObject * pycallback;
   PyObject * user;
   int exception;
+  int use_bytearray; // 0 means bytes, 1 means bytearray
+  int release_thread;
 };
 
 static void ld_callback (u_char * my_thread_state, const struct pcap_pkthdr * h, const u_char * data)
 {
   thread_state * ts = (thread_state *)my_thread_state;
-  PyEval_RestoreThread(ts->ts);
   PyObject * args;
   PyObject * rv;
-  args = Py_BuildValue("Os#lli",
-      ts->user, data, h->caplen, (long)h->ts.tv_sec, (long)h->ts.tv_usec, h->len);
+  if (ts->release_thread)
+    PyEval_RestoreThread(ts->ts);
+#ifndef NO_BYTEARRAYS
+  if (ts->use_bytearray)
+  {
+    args = Py_BuildValue("ONlli",
+                         ts->user,
+                         PyByteArray_FromStringAndSize((const char *)data, h->caplen),
+                         (long)h->ts.tv_sec,
+                         (long)h->ts.tv_usec,
+                         h->len);
+  }
+  else
+#endif
+  {
+    args = Py_BuildValue("Oy#lli",
+                         ts->user,
+                         data, h->caplen,
+                         (long)h->ts.tv_sec,
+                         (long)h->ts.tv_usec,
+                         h->len);
+  }
   rv = PyEval_CallObject(ts->pycallback, args);
   Py_DECREF(args);
   if (rv)
@@ -289,8 +342,8 @@ static void ld_callback (u_char * my_thread_state, const struct pcap_pkthdr * h,
     ts->exception = 1;
     pcap_breakloop(ts->ppcap);
   }
-  Py_DECREF(args);
-  ts->ts = PyEval_SaveThread();
+  if (ts->release_thread)
+    ts->ts = PyEval_SaveThread();
 }
 
 static PyObject * p_loop_or_dispatch (int dispatch, PyObject *self, PyObject *args)
@@ -299,19 +352,21 @@ static PyObject * p_loop_or_dispatch (int dispatch, PyObject *self, PyObject *ar
   thread_state ts;
   int cnt;
   int rv;
-  if (!PyArg_ParseTuple(args, "liOO", &ppcap, &cnt, &ts.pycallback, &ts.user)) return NULL;
+  int release_thread;
+  if (!PyArg_ParseTuple(args, "liOOii", &ppcap, &cnt, &ts.pycallback, &ts.user, &ts.use_bytearray, &release_thread)) return NULL;
   Py_INCREF(ts.user);
 
   ts.ppcap = ppcap;
   ts.exception = 0;
-  ts.ts = PyEval_SaveThread();
+  ts.release_thread = release_thread;
+  if (release_thread) ts.ts = PyEval_SaveThread();
 
   if (dispatch)
     rv = pcap_loop(ppcap, cnt, ld_callback, (u_char *)&ts);
   else
     rv = pcap_dispatch(ppcap, cnt, ld_callback, (u_char *)&ts);
 
-  PyEval_RestoreThread(ts.ts);
+  if (release_thread) PyEval_RestoreThread(ts.ts);
 
   Py_DECREF(ts.user);
 
@@ -333,17 +388,42 @@ static PyObject * p_dispatch (PyObject *self, PyObject *args)
 static PyObject * p_next_ex (PyObject *self, PyObject *args)
 {
   pcap_t * ppcap;
-  if (!PyArg_ParseTuple(args, "l", &ppcap)) return NULL;
+  int use_bytearray;
+  int release_thread;
+  if (!PyArg_ParseTuple(args, "lii", &ppcap, (int*)&use_bytearray, (int*)&release_thread)) return NULL;
 
   struct pcap_pkthdr * h;
   const u_char * data;
   int rv;
-  Py_BEGIN_ALLOW_THREADS;
-  rv = pcap_next_ex(ppcap, &h, &data);
-  Py_END_ALLOW_THREADS;
-  if (rv != 1) data = NULL;
+  if (release_thread)
+  {
+    Py_BEGIN_ALLOW_THREADS;
+    rv = pcap_next_ex(ppcap, &h, &data);
+    Py_END_ALLOW_THREADS;
+  }
+  else
+  {
+    rv = pcap_next_ex(ppcap, &h, &data);
+  }
 
-  return Py_BuildValue("s#llii",
+  if (rv != 1)
+  {
+    h->caplen = 0;
+    data = NULL;
+  }
+
+#ifndef NO_BYTEARRAYS
+  if (use_bytearray)
+  {
+    return Py_BuildValue("Nllii",
+                         PyByteArray_FromStringAndSize((const char *)data, h->caplen),
+                         (long)h->ts.tv_sec,
+                         (long)h->ts.tv_usec,
+                         h->len, rv);
+  }
+#endif
+
+  return Py_BuildValue("y#llii",
       data, h->caplen, (long)h->ts.tv_sec, (long)h->ts.tv_usec, h->len, rv);
 }
 
@@ -353,7 +433,7 @@ static PyObject * p_freecode (PyObject *self, PyObject *args)
   if (!PyArg_ParseTuple(args, "l", (long*)&fp)) return NULL;
   pcap_freecode(fp);
   delete fp;
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 static PyObject * p_compile (PyObject *self, PyObject *args)
@@ -385,7 +465,7 @@ static PyObject * p_set_datalink (PyObject *self, PyObject *args)
     PyErr_SetString(PyExc_RuntimeError, pcap_geterr(ppcap));
     return NULL;
   }
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 static PyObject * p_setdirection (PyObject *self, PyObject *args)
@@ -406,7 +486,40 @@ static PyObject * p_setdirection (PyObject *self, PyObject *args)
     PyErr_SetString(PyExc_RuntimeError, pcap_geterr(ppcap));
     return NULL;
   }
-  return Py_None;
+  Py_RETURN_NONE;
+}
+
+static PyObject * p_setnonblock (PyObject *self, PyObject *args)
+{
+  pcap_t * ppcap;
+  int nonblock;
+  char errbuf[PCAP_ERRBUF_SIZE];
+
+  if (!PyArg_ParseTuple(args, "li", (long*)&ppcap, (int*)&nonblock)) return NULL;
+  if (pcap_setnonblock(ppcap, nonblock ? 1 : 0, errbuf) == -1)
+  {
+    PyErr_SetString(PyExc_RuntimeError, errbuf);
+    return NULL;
+  }
+
+  Py_RETURN_NONE;
+}
+
+static PyObject * p_getnonblock (PyObject *self, PyObject *args)
+{
+  pcap_t * ppcap;
+  int nonblock;
+  char errbuf[PCAP_ERRBUF_SIZE];
+
+  if (!PyArg_ParseTuple(args, "l", (long*)&ppcap)) return NULL;
+  nonblock = pcap_getnonblock(ppcap, errbuf);
+  if (nonblock == -1)
+  {
+    PyErr_SetString(PyExc_RuntimeError, errbuf);
+    return NULL;
+  }
+
+  return Py_BuildValue("i", nonblock);
 }
 
 static PyObject * p_setfilter (PyObject *self, PyObject *args)
@@ -420,7 +533,7 @@ static PyObject * p_setfilter (PyObject *self, PyObject *args)
     PyErr_SetString(PyExc_RuntimeError, pcap_geterr(ppcap));
     return NULL;
   }
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 static PyObject * p_stats (PyObject *self, PyObject *args)
@@ -465,15 +578,20 @@ static PyObject * p_fileno (PyObject *self, PyObject *args)
 static PyObject * p_inject (PyObject *self, PyObject *args)
 {
   pcap_t * ppcap;
-  u_char * data;
-  int len;
-  if (!PyArg_ParseTuple(args, "ls#", (long*)&ppcap, &data, &len)) return NULL;
+  Py_buffer pbuf;
+  if (!PyArg_ParseTuple(args, "ls*", (long int*)&ppcap, &pbuf)) return NULL;
+  if (!PyBuffer_IsContiguous(&pbuf, 'C'))
+  {
+    PyBuffer_Release(&pbuf);
+    return PyErr_Format(PyExc_RuntimeError, "Buffer not contiguous");
+  }
 #ifdef WIN32
-  int rv = pcap_sendpacket(ppcap, data, len);
+  int rv = pcap_sendpacket(ppcap, pbuf.buf, pbuf.len);
   rv = rv ? 0 : len;
 #else
-  int rv = pcap_inject(ppcap, data, len);
+  int rv = pcap_inject(ppcap, pbuf.buf, pbuf.len);
 #endif
+  PyBuffer_Release(&pbuf);
   return Py_BuildValue("i", rv);
 }
 
@@ -482,7 +600,7 @@ static PyObject * p_close (PyObject *self, PyObject *args)
   pcap_t * ppcap;
   if (!PyArg_ParseTuple(args, "l", (long int*)&ppcap)) return NULL;
   pcap_close(ppcap);
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 static PyObject * p_breakloop (PyObject *self, PyObject *args)
@@ -490,7 +608,7 @@ static PyObject * p_breakloop (PyObject *self, PyObject *args)
   pcap_t * ppcap;
   if (!PyArg_ParseTuple(args, "l", (long int*)&ppcap)) return NULL;
   pcap_breakloop(ppcap);
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 static PyMethodDef pxpcapmethods[] =
@@ -498,12 +616,15 @@ static PyMethodDef pxpcapmethods[] =
   {"datalink", p_datalink, METH_VARARGS, "Get data link layer type.\nPass it a ppcap."},
   {"fileno", p_fileno, METH_VARARGS, "Get file descriptor for live capture\nPass it a ppcap."},
   {"close", p_close, METH_VARARGS, "Close capture device or file\nPass it a ppcap"},
-  {"loop", p_loop, METH_VARARGS, "Capture packets\nPass it a ppcap, a count, a callback, and an opaque 'user data'.\nCallback params are same as first four of next_ex()'s return value"},
+  {"loop", p_loop, METH_VARARGS, "Capture packets\nPass it a ppcap, a count, a callback, opaque 'user data', whether you want it to capture bytearrays, and whether you want it to let other threads run.\nCallback params are same as first four of next_ex()'s return value"},
   {"dispatch", p_dispatch, METH_VARARGS, "Capture packets\nVery similar to loop()."},
   {"open_live", p_open_live, METH_VARARGS, "Open a capture device\nPass it dev name, snaplen (max capture length), promiscuous flag (1 for on, 0 for off), timeout milliseconds.\nReturns ppcap."},
   {"open_dead", p_open_dead, METH_VARARGS, "Open a dummy capture device\nPass it a linktype and snaplen (max cap length).\nReturns ppcap."},
+  {"getnonblock", p_getnonblock, METH_VARARGS, "Returns whether a given ppcap is in blocking mode."},
+  {"setnonblock", p_setnonblock, METH_VARARGS, "Controls whether a ppcap is in blocking mode.\nTakes two parameters: a ppcap and a bool."},
+  {"get_selectable_fd", p_get_selectable_fd, METH_VARARGS, "Gets selectable file descriptor corresponding to a ppcap.\nPass it a ppcap.\nReturns FD or -1.\nNot supported on all platforms and devices."},
   {"findalldevs",  p_findalldevs, METH_VARARGS, "List capture devices\nReturns list of tuple (name, desc, addrs).\naddr are a list of tuple (protocol, address, netmask, broadcast, dest)."},
-  {"next_ex",  p_next_ex, METH_VARARGS, "Capture a single packet.\nPass it a ppcap.\nReturns tuple (data, timestamp_seconds, timestamp_useconds, total length, pcap_next_ex return value -- 1 is success)."},
+  {"next_ex",  p_next_ex, METH_VARARGS, "Capture a single packet.\nPass it a ppcap, whether to use a bytearray, and whether to let other threads run.\nReturns tuple (data, timestamp_seconds, timestamp_useconds, total length, pcap_next_ex return value -- 1 is success)."},
   {"breakloop",  p_breakloop, METH_VARARGS, "Break capture loop.\nPass it a ppcap."},
   {"stats",  p_stats, METH_VARARGS, "Get capture stats.\nPass it a ppcap.\nReturns (packets_received, packets_dropped)."},
   {"compile", p_compile, METH_VARARGS, "Compile filter.\nPass it ppcap, filter string, optimize flag (1=on/0=off), netmask\nReturns pprog."},
@@ -517,9 +638,23 @@ static PyMethodDef pxpcapmethods[] =
 
 #define ADD_CONST(_s) PyModule_AddIntConstant(m, #_s, _s);
 
-PyMODINIT_FUNC initpxpcap (void)
+
+static struct PyModuleDef moduledef = {
+  PyModuleDef_HEAD_INIT,
+  "pxpcap",
+  "POX PCap Library",
+  -1,
+  pxpcapmethods,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+};
+
+
+PyMODINIT_FUNC PyInit_pxpcap (void)
 {
-  PyObject * m = Py_InitModule("pxpcap", pxpcapmethods);
+  PyObject * m = PyModule_Create(&moduledef);
 
   //TODO: merge with similar list above
   ADD_CONST(DLT_NULL);
@@ -547,6 +682,7 @@ PyMODINIT_FUNC initpxpcap (void)
   ADD_CONST(DLT_ARCNET_LINUX);
   ADD_CONST(DLT_LINUX_IRDA);
   ADD_CONST(DLT_LINUX_LAPD);
-}
 
+  return m;
+}
 

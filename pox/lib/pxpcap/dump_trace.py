@@ -1,22 +1,19 @@
 # Copyright 2012,2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
-A simple hack of misc.packet_dump that dumps pcap files to the console.
+A simple hack of info.packet_dump that dumps pcap files to the console.
 
 Use --infile=<filename> to specify the pcap file.
 Use --verbose for really verbose dumps.
@@ -71,8 +68,11 @@ def cb (data, parser):
   else:
     p = packet
     while p:
-      if isinstance(p, basestring):
+      if isinstance(p, bytes):
         msg += "[%s bytes]" % (len(p),)
+        break
+      elif isinstance(p, str):
+        msg += "[%s chars]" % (len(p),)
         break
       msg += "[%s]" % (p.__class__.__name__,)
       p = p.next
@@ -82,7 +82,7 @@ def cb (data, parser):
       msg = msg[:_max_length-3]
       msg += "..."
   #core.getLogger("dump").info(msg)
-  print msg
+  print(msg)
 
 
 def launch (infile, verbose = False, max_length = 110,
@@ -94,12 +94,12 @@ def launch (infile, verbose = False, max_length = 110,
   else:
     _max_length = int(max_length)
   force_show = (show is True) or (hide is False and show is False)
-  if isinstance(hide, basestring):
+  if isinstance(hide, str):
     hide = hide.replace(',', ' ').replace('|', ' ')
     hide = set([p.lower() for p in hide.split()])
   else:
     hide = set()
-  if isinstance(show, basestring):
+  if isinstance(show, str):
     show = show.replace(',', ' ').replace('|', ' ')
     show = set([p.lower() for p in show.split()])
   else:

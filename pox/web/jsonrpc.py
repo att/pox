@@ -1,19 +1,16 @@
 # Copyright 2011,2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 A library for implementing JSON-RPC based web services
@@ -26,6 +23,15 @@ It'd be nice to factor the JSON-RPC stuff out so that it could
 be used with something besides just HTTP.
 
 Also, it has some capability for compatibility with Qooxdoo.
+
+See the openflow.webservice component for an example.
+
+IMPORTANT NOTE:
+Per the specifiction, JSON-RPC requests without an "id" field are
+*notifications* which do not require and should not receive responses.
+In other words, if you want to get a reply to a request, you must
+include an "id" member in the request.  You can, for example, just
+set it to 1 if you don't have anything better to set it to.
 """
 
 import json
@@ -96,7 +102,7 @@ class JSONRPCHandler (SplitRequestHandler):
     # Maybe the following arg-adding feature should just be part of
     # SplitRequestHandler?
 
-    for k,v in self.args.iteritems():
+    for k,v in self.args.items():
       setattr(self, "_arg_" + k, v)
 
     self.auth_function = self.args.get('auth', None)
@@ -113,15 +119,15 @@ class JSONRPCHandler (SplitRequestHandler):
     if not self.auth_function:
       return True
 
-    auth = self.headers.get("Authorization", "").strip().lower()
+    auth = self.headers.get("Authorization", "").strip()
     success = False
-    if auth.startswith("basic "):
+    if auth.lower().startswith("basic "):
       try:
         auth = base64.decodestring(auth[6:].strip()).split(':', 1)
         success = self.auth_function(auth[0], auth[1])
       except:
         pass
-    if not success: 
+    if not success:
       self.send_response(401, "Authorization Required")
       self._send_auth_header()
       self.end_headers()
@@ -136,7 +142,7 @@ class JSONRPCHandler (SplitRequestHandler):
         e['origin'] = o
       else:
         e['origin'] = QX_ORIGIN_METHOD
-        
+
   def _handle (self, data):
     try:
       try:
@@ -283,5 +289,3 @@ def make_error (msg = "Unknown Error",
     e['data'] = data
   r = {'error':e}
   return r
-
-

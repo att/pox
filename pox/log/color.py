@@ -1,19 +1,16 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # NOTE: Not platform independent -- uses VT escape codes
 
@@ -55,7 +52,7 @@ COLORS = {
 }
 
 # Add intense/bold colors (names it capitals)
-for _c in [_n for _n,_v in COLORS.items() if _v[0] == 0]:
+for _c in [_n for _n,_v in list(COLORS.items()) if _v[0] == 0]:
   COLORS[_c.upper()] = (1,COLORS[_c][1])
 
 COMMANDS = {
@@ -100,7 +97,7 @@ def _proc (msg, level_color = "DEBUG"):
     if cmd:
       best = None
       bestlen = 0
-      for k,v in COMMANDS.iteritems():
+      for k,v in COMMANDS.items():
         if len(k) > bestlen:
           if m.startswith(k):
             best = (k,v)
@@ -111,7 +108,7 @@ def _proc (msg, level_color = "DEBUG"):
         m = m[bestlen:]
         best = None
         bestlen = 0
-      for k,v in COLORS.iteritems():
+      for k,v in COLORS.items():
         if len(k) > bestlen:
           if m.startswith(k):
             best = (k,v)

@@ -1,23 +1,24 @@
-# Copyright 2011,2012 James McCauley
+# Copyright 2011,2012,2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Various utility functions
+
+Some of these are POX-specific, and some aren't.
 """
+
+#TODO: Break into multiple modules?  (data structures, POX-specific, etc.)
 
 from __future__ import print_function
 
@@ -27,13 +28,50 @@ import sys
 import os
 import time
 import socket
+import collections
+
+from pox.lib.iter import first_of
+
 
 #FIXME: ugh, why can't I make importing pox.core work here?
 import logging
 log = logging.getLogger("util")
 
 
+class ClassicCmp (object):
+  """
+  Helper for porting Python2 __cmp__ functions to Python 3
+
+  Override _classic__cmp__ to change how it behaves (really, you should
+  just rename an old __cmp__ to _classic__cmp__).
+  """
+
+  def __lt__ (self, other):
+    return self._classic__cmp__(other) < 0
+
+  def __gt__ (self, other):
+    return self._classic__cmp__(other) > 0
+
+  def __le__ (self, other):
+    return self._classic__cmp__(other) <= 0
+
+  def __gt__ (self, other):
+    return self._classic__cmp__(other) >= 0
+
+  def __eq__ (self, other):
+    return self._classic__cmp__(other) == 0
+
+  def __ne__ (self, other):
+    return self._classic__cmp__(other) != 0
+
+
+
 class DirtyList (list):
+  """
+  A list which keeps track of changes
+
+  When the list is altered, callback (if any) is called, and dirty is set.
+  """
   #TODO: right now the callback may be called more often than needed
   #      and it may not be called with good names/parameters.
   #      All you can really rely on is that it will be called in
@@ -112,6 +150,7 @@ class DirtyList (list):
 class DirtyDict (dict):
   """
   A dict that tracks whether values have been changed shallowly.
+
   If you set a callback, it will be called when the value changes, and
   passed three values: "add"/"modify"/"delete", key, value
   """
@@ -139,12 +178,30 @@ class DirtyDict (dict):
     dict.__delitem__(self, k)
 
 
+class DefaultDict (collections.defaultdict):
+  """
+  A dictionary that can create missing values
+
+  This is similar to (and a subclass of) collections.defaultdict.  However, it
+  calls the default factory passing it the missing key.
+  """
+  #TODO: Make key-passing a constructor option so that this can serve as a
+  #      complete defaultdict replacement.
+  def __missing__ (self, key):
+    v = self.default_factory(key)
+    self[key] = v
+    return v
+
+
 def set_extend (l, index, item, emptyValue = None):
   """
+  Sets l[index] = item, padding l if needed
+
   Adds item to the list l at position index.  If index is beyond the end
   of the list, it will pad the list out until it's large enough, using
   emptyValue for the new entries.
   """
+  #TODO: Better name?  The 'set' is a bit misleading.
   if index >= len(l):
     l += ([emptyValue] * (index - len(self) + 1))
   l[index] = item
@@ -173,13 +230,13 @@ def dpid_to_str (dpid, alwaysLong = False):
   """
   Convert a DPID from a long into into the canonical string form.
   """
-  if type(dpid) is long or type(dpid) is int:
+  if type(dpid) is int:
     # Not sure if this is right
     dpid = struct.pack('!Q', dpid)
 
   assert len(dpid) == 8
 
-  r = '-'.join(['%02x' % (ord(x),) for x in dpid[2:]])
+  r = '-'.join(['%02x' % (x,) for x in dpid[2:]])
 
   if alwaysLong or dpid[0:2] != (b'\x00'*2):
     r += '|' + str(struct.unpack('!H', dpid[0:2])[0])
@@ -191,6 +248,7 @@ dpidToStr = dpid_to_str # Deprecated
 def assert_type(name, obj, types, none_ok=True):
   """
   Assert that a parameter is of a given type.
+
   Raise an Assertion Error with a descriptive error msg if not.
 
   name: name of the parameter for error messages
@@ -210,7 +268,7 @@ def assert_type(name, obj, types, none_ok=True):
   for cls in types:
     if isinstance(obj, cls):
       return True
-  allowed_types = "|".join(map(lambda x: str(x), types))
+  allowed_types = "|".join(str(x) for x in types)
   stack = traceback.extract_stack()
   stack_msg = "Function call %s() in %s:%d" % (stack[-2][2],
                                                stack[-3][0], stack[-3][1])
@@ -222,10 +280,12 @@ def assert_type(name, obj, types, none_ok=True):
 
 def init_helper (obj, kw):
   """
+  Helper for classes with attributes initialized by keyword arguments.
+
   Inside a class's __init__, this will copy keyword arguments to fields
   of the same name.  See libopenflow for an example.
   """
-  for k,v in kw.iteritems():
+  for k,v in kw.items():
     if not hasattr(obj, k):
       raise TypeError(obj.__class__.__name__ + " constructor got "
       + "unexpected keyword argument '" + k + "'")
@@ -233,14 +293,17 @@ def init_helper (obj, kw):
 initHelper = init_helper # Deprecated
 
 
+class Pinger (object):
+  pass
+
 def make_pinger ():
   """
   A pinger is basically a thing to let you wake a select().
+
   On Unix systems, this makes a pipe pair.  But on Windows, select() only
   works with sockets, so it makes a pair of connected sockets.
   """
-
-  class PipePinger (object):
+  class PipePinger (Pinger):
     def __init__ (self, pair):
       self._w = pair[1]
       self._r = pair[0]
@@ -248,12 +311,15 @@ def make_pinger ():
 
     def ping (self):
       if os is None: return #TODO: Is there a better fix for this?
-      os.write(self._w, ' ')
+      os.write(self._w, b' ')
 
     def fileno (self):
       return self._r
 
-    def pongAll (self):
+    def pongAll (self): # Deprecated
+      return self.pong_all()
+
+    def pong_all (self):
       #TODO: make this actually read all
       os.read(self._r, 1024)
 
@@ -273,15 +339,20 @@ def make_pinger ():
     def __repr__ (self):
       return "<%s %i/%i>" % (self.__class__.__name__, self._w, self._r)
 
-  class SocketPinger (object):
+  class SocketPinger (Pinger):
     def __init__ (self, pair):
       self._w = pair[1]
       self._r = pair[0]
     def ping (self):
       self._w.send(' ')
+    #FIXME: Since the read socket is now nonblocking, there's the possibility
+    #       that the recv() calls for pong will not complete.  We should
+    #       deal with this.
     def pong (self):
       self._r.recv(1)
-    def pongAll (self):
+    def pongAll (self): # Deprecated
+      return self.pong_all()
+    def pong_all (self):
       #TODO: make this actually read all
       self._r.recv(1024)
     def fileno (self):
@@ -295,26 +366,33 @@ def make_pinger ():
     return PipePinger(os.pipe())
 
   #TODO: clean up sockets?
-  localaddress = '127.127.127.127'
+  #TODO: use socketpair if available?
+  localaddresses = ['127.0.0.1', '127.127.127.127'] # Try oddball one first
   startPort = 10000
 
   import socket
   import select
 
   def tryConnect ():
-    l = socket.socket()
-    l.setblocking(0)
-
-    port = startPort
+    l = None
+    localaddress = None
+    port = None
     while True:
+      if localaddress is None:
+        if not localaddresses:
+          raise RuntimeError("Could not find a free socket")
+        localaddress = localaddresses.pop()
+        port = startPort
       try:
+        l = socket.socket()
         l.bind( (localaddress, port) )
+        l.listen(0)
         break
       except:
         port += 1
         if port - startPort > 1000:
-          raise RuntimeError("Could not find a free socket")
-    l.listen(0)
+          localaddress = None
+    l.setblocking(0)
 
     r = socket.socket()
 
@@ -328,11 +406,15 @@ def make_pinger ():
       log.warning("makePinger: connect exception:\n" + ei)
       return False
 
-    rlist, wlist,elist = select.select([l], [], [l], 2)
-    if len(elist):
-      log.warning("makePinger: socket error in select()")
-      return False
-    if len(rlist) == 0:
+    t = time.time() + 2
+    while time.time() < t:
+      rlist, wlist,elist = select.select([l], [], [l], 2)
+      if len(elist):
+        log.warning("makePinger: socket error in select()")
+        return False
+      if len(rlist) != 0:
+        break
+    else:
       log.warning("makePinger: socket didn't connect")
       return False
 
@@ -346,7 +428,7 @@ def make_pinger ():
       log.info("makePinger: pair didn't connect to each other!")
       return False
 
-    r.setblocking(1)
+    r.setblocking(0)
 
     # Turn off Nagle
     r.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -396,11 +478,14 @@ def str_to_bool (s):
 
 
 def hexdump (data):
-  if isinstance(data, str):
+  """
+  Converts raw data to a hex dump
+  """
+  if isinstance(data, (str,bytes)):
     data = [ord(c) for c in data]
   o = ""
   def chunks (data, length):
-    return (data[i:i+length] for i in xrange(0, len(data), length))
+    return (data[i:i+length] for i in range(0, len(data), length))
   def filt (c):
     if c >= 32 and c <= 126: return chr(c)
     return '.'
@@ -412,19 +497,24 @@ def hexdump (data):
     l = "%-48s" % (l,)
     l = l[:3*8-1] + "  " + l[3*8:]
     t = ''.join([filt(x) for x in chunk])
-    l += '  %-16s' % (t,)
+    l += '  |%-16s|' % (t,)
     o += l
   return o
 
 
 def connect_socket_with_backoff (address, port, max_backoff_seconds=32):
-  '''
-  Connect to the given address and port. If the connection attempt fails, 
-  exponentially back off, up to the max backoff
-  
+  """
+  Attempt to connect to the given address and port.
+
+  If the connection attempt fails, exponentially back off, up to the maximum.
+
   return the connected socket, or raise an exception if the connection
-  was unsuccessful
-  '''
+  was unsuccessful by the time the maximum was reached.
+
+  Note: blocks while connecting.
+  """
+  #TODO: Remove?  The backoff IOWorker seems like a better way to do this
+  #      in general.
   backoff_seconds = 1
   sock = None
   print("connect_socket_with_backoff(address=%s, port=%d)"
@@ -446,22 +536,36 @@ def connect_socket_with_backoff (address, port, max_backoff_seconds=32):
   return sock
 
 
-_scalar_types = (int, long, basestring, float, bool)
+_scalar_types = (int, str, float, bool)
 
 def is_scalar (v):
- return isinstance(v, _scalar_types)
+  """
+  Is the given value a scalar-like object?
+  """
+  return isinstance(v, _scalar_types)
+
+
+def is_listlike (o):
+  """
+  Is this a sequence that isn't like a string or bytes?
+  """
+  if isinstance(o, (bytes,str,bytearray)): return False
+  return isinstance(o, collections.abc.Iterable)
 
 
 def fields_of (obj, primitives_only=False,
-               primitives_and_composites_only=False, allow_caps=False):
+               primitives_and_composites_only=False, allow_caps=False,
+               ignore=set()):
   """
   Returns key/value pairs of things that seem like public fields of an object.
   """
   #NOTE: The above docstring isn't split into two lines on purpose.
+  #NOTE: See Python builtin vars().
 
   r = {}
   for k in dir(obj):
     if k.startswith('_'): continue
+    if k in ignore: continue
     v = getattr(obj, k)
     if hasattr(v, '__call__'): continue
     if not allow_caps and k.upper() == k: continue
@@ -469,12 +573,49 @@ def fields_of (obj, primitives_only=False,
       if not isinstance(v, _scalar_types):
         continue
     elif primitives_and_composites_only:
-      if not isinstance(v, (int, long, basestring, float, bool, set,
+      if not isinstance(v, (int, str, bytes, float, bool, set,
                             dict, list)):
         continue
     #r.append((k,v))
     r[k] = v
   return r
+
+
+def del_values_where (d, f):
+  """
+  Deletes items from dict if f(value) is True
+
+  This is optimized for cases with few or no removals.
+  """
+  dead = None
+  for k,v in container.items():
+    if f(v):
+      if not dead: dead = [k]
+      else: dead.append(k)
+  if dead:
+    for k in dead:
+      del d[k]
+
+
+def aslist (l):
+  """
+  Ensures l is a list without copying it
+  """
+  if isinstance(l, list): return l
+  return list(l)
+
+
+def eval_args (f):
+  """
+  A decorator which causes arguments to be interpreted as Python literals
+
+  This isn't a generic decorator, but is specifically meant for POX component
+  launch functions -- the actual magic is in POX's boot code.
+  The intention is for launch function/commandline arguments (normally all
+  strings) to easily receive other types.
+  """
+  f._pox_eval_args = True
+  return f
 
 
 if __name__ == "__main__":

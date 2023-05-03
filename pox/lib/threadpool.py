@@ -1,19 +1,16 @@
 # Copyright 2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Totally untested thread pool class.
@@ -24,7 +21,7 @@ Kills off up to around half of its workers when more than half are idle.
 from __future__ import print_function
 from __future__ import with_statement
 from threading import Thread, RLock
-from Queue import Queue
+from queue import Queue
 
 
 CYCLE_TIME = 3
@@ -74,7 +71,7 @@ class ThreadPool (object):
     self._tasks = Queue()
     self.maximum = maximum
     self._lock = RLock()
-    for i in xrange(initial):
+    for i in range(initial):
       self._new_worker
 
   def _new_worker (self):
@@ -100,8 +97,8 @@ class ThreadPool (object):
 
     self._tasks.put((func, args, kwargs))
 
-    if self.available > self._total / 2 and self.total > 8:
-      for i in xrange(self._total / 2 - 1):
+    if self.available > self._total // 2 and self.total > 8:
+      for i in range(self._total // 2 - 1):
         self._tasks.put((None,None,None))
 
     self._lock.release()

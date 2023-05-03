@@ -1,21 +1,18 @@
 #!/bin/sh -
 
-# Copyright 2011-2012 James McCauley
+# Copyright 2011,2012,2013,2017 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # If you have PyPy 1.6+ in a directory called pypy alongside pox.py, we
 # use it.
@@ -25,23 +22,6 @@
 
 #TODO: Make runnable by itself (paths need adjusting, etc.).
 
-''''true
-export OPT="-u -O"
-export FLG=""
-if [ "$(basename $0)" = "debug-pox.py" ]; then
-  export OPT=""
-  export FLG="--debug"
-fi
-
-if [ -x pypy/bin/pypy ]; then
-  exec pypy/bin/pypy $OPT "$0" $FLG "$@"
-fi
-
-if type python2.7 > /dev/null; then
-  exec python2.7 $OPT "$0" $FLG "$@"
-fi
-exec python $OPT "$0" $FLG "$@"
-'''
 
 from __future__ import print_function
 
@@ -51,11 +31,15 @@ import os
 import sys
 import traceback
 import time
+import inspect
+import types
+import threading
 
-from pox.core import core
+import pox.core
+core = None
+
 import pox.openflow
-import pox.openflow.of_01
-from pox.lib.util import str_to_bool
+from pox.lib.util import str_to_bool, first_of
 
 # Function to run on main thread
 _main_thread_function = None
@@ -70,6 +54,7 @@ def _do_import (name):
   Try to import the named component.
   Returns its module name if it was loaded or False on failure.
   """
+  #TODO: Update to use the Python 3 import facilities
 
   def show_fail ():
     traceback.print_exc()
@@ -86,9 +71,9 @@ def _do_import (name):
       return name
 
     try:
-      __import__(name, globals(), locals())
+      __import__(name, level=0)
       return name
-    except ImportError:
+    except ModuleNotFoundError as exc:
       # There are two cases why this might happen:
       # 1. The named module could not be found
       # 2. Some dependent module (import foo) or some dependent
@@ -100,21 +85,19 @@ def _do_import (name):
       # print a stack trace so that it can be fixed.
       # Sorting out the two cases is an ugly hack.
 
-      s = sys.exc_info()[1].message.rsplit(" ", 1)
-
-      # Sadly, PyPy isn't consistent with CPython here.
-      if s[0] == "No module named" and (name.endswith(s[1]) or __pypy__):
+      if exc.name and name.endswith(exc.name):
         # It was the one we tried to import itself. (Case 1)
         # If we have other names to try, try them!
         return do_import2(base_name, names_to_try)
-      elif (sys.exc_info()[1].message
-          == "Import by filename is not supported."):
-        print(sys.exc_info()[1].message)
+      elif name.endswith(".py"):
+        print("Import by filename is not supported.")
         import os.path
         n = name.replace("/", ".").replace("\\", ".")
         n = n.replace( os.path.sep, ".")
         if n.startswith("pox.") or n.startswith("ext."):
           n = n[4:]
+        if n.endswith(".py"):
+          n = n[:-3]
         print("Maybe you meant to run '%s'?" % (n,))
         return False
       else:
@@ -131,7 +114,26 @@ def _do_import (name):
   return do_import2(name, ["pox." + name, name])
 
 
-def _do_launch (argv):
+def _do_imports (components):
+  """
+  Import each of the listed components
+
+  Returns map of component_name->name,module,members on success,
+  or False on failure
+  """
+  done = {}
+  for name in components:
+    if name in done: continue
+    r = _do_import(name)
+    if r is False:
+      return False
+    members = dict(inspect.getmembers(sys.modules[r]))
+    done[name] = (r,sys.modules[r],members)
+
+  return done
+
+
+def _do_launch (argv, skip_startup=False):
   component_order = []
   components = {}
 
@@ -140,9 +142,13 @@ def _do_launch (argv):
 
   for arg in argv:
     if not arg.startswith("-"):
+      if "=" in arg:
+        arg,first_arg = arg.split("=", 1)
+        curargs = {None:first_arg}
+      else:
+        curargs = {}
       if arg not in components:
         components[arg] = []
-      curargs = {}
       components[arg].append(curargs)
       component_order.append(arg)
     else:
@@ -151,8 +157,22 @@ def _do_launch (argv):
       if len(arg) == 1: arg.append(True)
       curargs[arg[0]] = arg[1]
 
-  _options.process_options(pox_options)
-  _pre_startup()
+  if not skip_startup:
+    _options.process_options(pox_options)
+    global core
+    if pox.core.core is not None:
+      core = pox.core.core
+      core.getLogger('boot').debug('Using existing POX core')
+    else:
+      core = pox.core.initialize(_options.threaded_selecthub,
+                                 _options.epoll_selecthub,
+                                 _options.handle_signals)
+
+    _pre_startup()
+
+  modules = _do_imports(n.split("=")[0].split(':')[0] for n in component_order)
+  if modules is False:
+    return False
 
   inst = {}
   for name in component_order:
@@ -162,21 +182,33 @@ def _do_launch (argv):
     name = name.split(":", 1)
     launch = name[1] if len(name) == 2 else "launch"
     name = name[0]
+    first_arg = params.pop(None, None)
 
-    r = _do_import(name)
-    if r is False: return False
-    name = r
-    #print(">>",name)
+    name,module,members = modules[name]
 
-    if launch in sys.modules[name].__dict__:
-      f = sys.modules[name].__dict__[launch]
-      if f.__class__ is not _do_launch.__class__:
+    if launch in members:
+      f = members[launch]
+      # We explicitly test for a function and not an arbitrary callable
+      if type(f) is not types.FunctionType:
         print(launch, "in", name, "isn't a function!")
         return False
 
+      if getattr(f, '_pox_eval_args', False):
+        import ast
+        for k,v in list(params.items()):
+          if isinstance(v, str):
+            try:
+              params[k] = ast.literal_eval(v)
+            except:
+              # Leave it as a string
+              pass
+
       multi = False
-      if f.func_code.co_argcount > 0:
-        if (f.func_code.co_varnames[f.func_code.co_argcount-1]
+      if f.__code__.co_argcount > 0:
+        #FIXME: This code doesn't look quite right to me and may be broken
+        #       in some cases.  We should refactor to use inspect anyway,
+        #       which should hopefully just fix it.
+        if (f.__code__.co_varnames[f.__code__.co_argcount-1]
             == '__INSTANCE__'):
           # It's a multi-instance-aware component.
 
@@ -196,13 +228,18 @@ def _do_launch (argv):
         return False
 
       try:
-        f(**params)
+        if first_arg is not None:
+          pparams = (first_arg,)
+        else:
+          pparams = ()
+        if f(*pparams, **params) is False:
+          # Abort startup
+          return False
       except TypeError as exc:
         instText = ''
         if inst[cname] > 0:
           instText = "instance {0} of ".format(inst[cname] + 1)
         print("Error executing {2}{0}.{1}:".format(name,launch,instText))
-        import inspect
         if inspect.currentframe() is sys.exc_info()[2].tb_frame:
           # Error is with calling the function
           # Try to give some useful feedback
@@ -216,7 +253,7 @@ def _do_launch (argv):
           code = f.__code__
           argcount = code.co_argcount
           argnames = code.co_varnames[:argcount]
-          defaults = list((f.func_defaults) or [])
+          defaults = list((f.__defaults__) or [])
           defaults = [EMPTY] * (argcount - len(defaults)) + defaults
           args = {}
           for n, a in enumerate(argnames):
@@ -248,18 +285,18 @@ def _do_launch (argv):
                                                 "Active"))
             print(" {0:25} {0:25} {0:25}".format("-" * 15))
 
-            for k,v in args.iteritems():
+            for k,v in args.items():
               print(" {0:25} {1:25} {2:25}".format(k,str(v[0]),
                     str(v[1] if v[1] is not EMPTY else v[0])))
 
           if len(params):
             print("This component does not have a parameter named "
-                  + "'{0}'.".format(params.keys()[0]))
+                  + "'{0}'.".format(first_of(params.keys())))
             return False
-          missing = [k for k,x in args.iteritems()
+          missing = [k for k,x in args.items()
                      if x[1] is EMPTY and x[0] is EMPTY]
           if len(missing):
-            print("You must specify a value for the '{0}'"
+            print("You must specify a value for the '{0}' "
                   "parameter.".format(missing[0]))
             return False
 
@@ -267,7 +304,7 @@ def _do_launch (argv):
         else:
           # Error is inside the function
           raise
-    elif len(params) > 0 or launch is not "launch":
+    elif len(params) > 0 or launch != "launch":
       print("Module %s has no %s(), but it was specified or passed " \
             "arguments" % (name, launch))
       return False
@@ -298,7 +335,7 @@ class Options (object):
     return True
 
   def process_options (self, options):
-    for k,v in options.iteritems():
+    for k,v in options.items():
       if self.set(k, v) is False:
         # Bad option!
         sys.exit(1)
@@ -322,6 +359,9 @@ support are up to the module.  As an example, you can load a learning
 switch app that listens on a non-standard port number by specifying an
 option to the of_01 component, and loading the l2_learning component like:
   ./pox.py --verbose openflow.of_01 --port=6634 forwarding.l2_learning
+
+The 'help' component can give help for other components.  Start with:
+  ./pox.py help --help
 """.strip()
 
 
@@ -331,6 +371,9 @@ class POXOptions (Options):
     self.verbose = False
     self.enable_openflow = True
     self.log_config = None
+    self.threaded_selecthub = True
+    self.epoll_selecthub = False
+    self.handle_signals = True
 
   def _set_h (self, given_name, name, value):
     self._set_help(given_name, name, value)
@@ -341,8 +384,17 @@ class POXOptions (Options):
     sys.exit(0)
 
   def _set_version (self, given_name, name, value):
+    global core
+    if core is None:
+      core = pox.core.initialize()
     print(core._get_python_version())
     sys.exit(0)
+
+  def _set_unthreaded_sh (self, given_name, name, value):
+    self.threaded_selecthub = False
+
+  def _set_epoll_sh (self, given_name, name, value):
+    self.epoll_selecthub = str_to_bool(value)
 
   def _set_no_openflow (self, given_name, name, value):
     self.enable_openflow = not str_to_bool(value)
@@ -354,7 +406,7 @@ class POXOptions (Options):
     if value is True:
       # I think I use a better method for finding the path elsewhere...
       p = os.path.dirname(os.path.realpath(__file__))
-      value = os.path.join(p, "logging.cfg")
+      value = os.path.join(p, "..", "logging.cfg")
     self.log_config = value
 
   def _set_debug (self, given_name, name, value):
@@ -384,12 +436,19 @@ def _pre_startup ():
     logging.getLogger().setLevel(logging.DEBUG)
 
   if _options.enable_openflow:
-    pox.openflow.launch() # Default OpenFlow launch
+    pox.openflow._launch() # Default OpenFlow launch
 
 
 def _post_startup ():
   if _options.enable_openflow:
-    pox.openflow.of_01.launch() # Usually, we launch of_01
+    if core._openflow_wanted:
+      if not core.hasComponent("of_01"):
+        # Launch a default of_01
+        import pox.openflow.of_01
+        pox.openflow.of_01.launch()
+    else:
+      logging.getLogger("boot").debug("Not launching of_01")
+
 
 
 def _setup_logging ():
@@ -434,17 +493,23 @@ def set_main_function (f):
   return True
 
 
-def boot ():
+def boot (argv = None):
   """
   Start up POX.
   """
 
   # Add pox directory to path
-  sys.path.append(os.path.abspath(os.path.join(sys.path[0], 'pox')))
-  sys.path.append(os.path.abspath(os.path.join(sys.path[0], 'ext')))
+  base = sys.path[0]
+  sys.path.insert(0, os.path.abspath(os.path.join(base, 'pox')))
+  sys.path.insert(0, os.path.abspath(os.path.join(base, 'ext')))
+
+  thread_count = threading.active_count()
+
+  quiet = False
 
   try:
-    argv = sys.argv[1:]
+    if argv is None:
+      argv = sys.argv[1:]
 
     # Always load cli (first!)
     #TODO: Can we just get rid of the normal options yet?
@@ -460,12 +525,30 @@ def boot ():
       _post_startup()
       core.goUp()
     else:
-      return
+      #return
+      quiet = True
+      raise RuntimeError()
 
   except SystemExit:
     return
   except:
-    traceback.print_exc()
+    if not quiet:
+      traceback.print_exc()
+
+    # Try to exit normally, but do a hard exit if we don't.
+    # This is sort of a hack.  What's the better option?  Raise
+    # the going down event on core even though we never went up?
+
+    try:
+      for _ in range(4):
+        if threading.active_count() <= thread_count:
+          # Normal exit
+          return
+        time.sleep(0.25)
+    except:
+      pass
+
+    os._exit(1)
     return
 
   if _main_thread_function:
@@ -473,8 +556,11 @@ def boot ():
   else:
     #core.acquire()
     try:
-      while core.running:
-        time.sleep(10)
+      while True:
+        if core.quit_condition.acquire(False):
+          core.quit_condition.wait(10)
+          core.quit_condition.release()
+        if not core.running: break
     except:
       pass
     #core.scheduler._thread.join() # Sleazy
@@ -483,4 +569,3 @@ def boot ():
     pox.core.core.quit()
   except:
     pass
-

@@ -1,20 +1,17 @@
 # Copyright 2011 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -40,19 +37,19 @@
 #=====================================================================
 import struct
 
-from packet_base import packet_base
-from ipv4 import ipv4
+from .packet_base import packet_base
+from .ipv4 import ipv4
 
-from ethernet import ethernet
-from ethernet import ETHER_ANY
-from ethernet import ETHER_BROADCAST
+from .ethernet import ethernet
+from .ethernet import ETHER_ANY
+from .ethernet import ETHER_BROADCAST
 
-from ipv4 import IP_ANY
-from ipv4 import IP_BROADCAST
+from .ipv4 import IP_ANY
+from .ipv4 import IP_BROADCAST
 
 from pox.lib.addresses import IPAddr, EthAddr
 
-from packet_utils       import *
+from .packet_utils       import *
 
 class arp (packet_base):
     "ARP/RARP packet struct"
@@ -80,7 +77,7 @@ class arp (packet_base):
         self.hwlen      = 6
         self.opcode     = 0
         self.protolen   = 4
-        self.protosrc   = IP_ANY 
+        self.protosrc   = IP_ANY
         self.protodst   = IP_ANY
         self.next       = b''
 
@@ -91,6 +88,7 @@ class arp (packet_base):
 
     def parse (self, raw):
         assert isinstance(raw, bytes)
+        self.next = None # In case of unfinished parsing
         self.raw = raw
         dlen = len(raw)
         if dlen < arp.MIN_LEN:
@@ -102,15 +100,19 @@ class arp (packet_base):
 
         if self.hwtype != arp.HW_TYPE_ETHERNET:
             self.msg('(arp parse) hw type unknown %u' % self.hwtype)
+            return
         if self.hwlen != 6:
             self.msg('(arp parse) unknown hw len %u' % self.hwlen)
+            return
         else:
             self.hwsrc = EthAddr(raw[8:14])
             self.hwdst = EthAddr(raw[18:24])
         if self.prototype != arp.PROTO_TYPE_IP:
             self.msg('(arp parse) proto type unknown %u' % self.prototype)
+            return
         if self.protolen != 4:
             self.msg('(arp parse) unknown proto len %u' % self.protolen)
+            return
         else:
             self.protosrc = IPAddr(struct.unpack('!I',raw[14:18])[0])
             self.protodst = IPAddr(struct.unpack('!I',raw[24:28])[0])

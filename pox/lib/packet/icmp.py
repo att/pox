@@ -1,20 +1,17 @@
-# Copyright 2011 James McCauley
+# Copyright 2011,2014 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -35,9 +32,9 @@
 #======================================================================
 import struct
 import random
-from packet_utils       import *
+from .packet_utils import *
 
-from packet_base import packet_base
+from .packet_base import packet_base
 
 TYPE_ECHO_REPLY   = 0
 TYPE_DEST_UNREACH = 3
@@ -65,10 +62,11 @@ _type_to_name = {
 
 # This is such a hack; someone really needs to rewrite the
 # stringizing.
+# (Note: There may actually be a better way now using _to_str().)
 def _str_rest (s, p):
   if p.next is None:
     return s
-  if isinstance(p.next, basestring):
+  if isinstance(p.next, bytes):
     return "[%s bytes]" % (len(p.next),)
   return s+str(p.next)
 
@@ -128,6 +126,69 @@ class echo(packet_base):
 
 #----------------------------------------------------------------------
 #
+#  Time Exceeded
+#   0                   1                   2                   3
+#   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#  |                              Unused                           |
+#  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#  |       IP Header + 8 bytes of original datagram's data         |
+#  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#
+#----------------------------------------------------------------------
+class time_exceeded (packet_base):
+    """
+    ICMP time exceeded packet struct
+    """
+
+    #NOTE: unreachable and time_exceeded are really similar.  If you
+    #      update one, please look at the other as well!
+
+    MIN_LEN = 4
+
+    def __init__ (self, raw=None, prev=None, **kw):
+        packet_base.__init__(self)
+
+        self.prev = prev
+
+        self.unused = 0
+
+        if raw is not None:
+            self.parse(raw)
+
+        self._init(kw)
+
+    def __str__ (self):
+        s = '[time_exceeded]'
+
+        return _str_rest(s, self)
+
+    def parse (self, raw):
+        assert isinstance(raw, bytes)
+        self.raw = raw
+        dlen = len(raw)
+        if dlen < self.MIN_LEN:
+            self.msg('(time_exceeded parse) warning payload too short '
+                     'to parse header: data len %u' % (dlen,))
+            return
+
+        self.unused = struct.unpack('!I', raw[:self.MIN_LEN])[0]
+
+        self.parsed = True
+
+        if dlen >= 28:
+            # xxx We're assuming this is IPv4!
+            from . import ipv4
+            self.next = ipv4.ipv4(raw=raw[self.MIN_LEN:],prev=self)
+        else:
+            self.next = raw[self.MIN_LEN:]
+
+    def hdr (self, payload):
+        return struct.pack('!I', self.unused)
+
+
+#----------------------------------------------------------------------
+#
 #  Destination Unreachable
 #   0                   1                   2                   3
 #   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -139,11 +200,17 @@ class echo(packet_base):
 #
 #----------------------------------------------------------------------
 class unreach(packet_base):
-    "ICMP unreachable packet struct"
+    """
+    ICMP unreachable packet struct
+    """
+
+    #NOTE: unreachable and time_exceeded are really similar.  If you
+    #      update one, please look at the other as well!
 
     MIN_LEN = 4
 
     def __init__(self, raw=None, prev=None, **kw):
+        packet_base.__init__(self)
 
         self.prev = prev
 
@@ -165,7 +232,8 @@ class unreach(packet_base):
         self.raw = raw
         dlen = len(raw)
         if dlen < self.MIN_LEN:
-            self.msg('(unreach parse) warning unreachable payload too short to parse header: data len %u' % dlen)
+            self.msg('(unreach parse) warning unreachable payload too short '
+                     'to parse header: data len %u' % dlen)
             return
 
         (self.unused, self.next_mtu) \
@@ -175,13 +243,33 @@ class unreach(packet_base):
 
         if dlen >= 28:
             # xxx We're assuming this is IPv4!
-            import ipv4
+            from . import ipv4
             self.next = ipv4.ipv4(raw=raw[unreach.MIN_LEN:],prev=self)
         else:
             self.next = raw[unreach.MIN_LEN:]
 
     def hdr(self, payload):
         return struct.pack('!HH', self.unused, self.next_mtu)
+
+    @property
+    def srcip (self):
+        """
+        srcip of referenced packet or None
+        """
+        try:
+          return self.payload.srcip
+        except Exception:
+          return None
+
+    @property
+    def dstip (self):
+        """
+        dstip of referenced packet or None
+        """
+        try:
+          return self.payload.dstip
+        except Exception:
+          return None
 
 
 class icmp(packet_base):
@@ -190,6 +278,7 @@ class icmp(packet_base):
     MIN_LEN = 4
 
     def __init__(self, raw=None, prev=None, **kw):
+        packet_base.__init__(self)
 
         self.prev = prev
 
@@ -220,10 +309,12 @@ class icmp(packet_base):
 
         self.parsed = True
 
-        if (self.type == TYPE_ECHO_REQUEST or self.type == TYPE_ECHO_REPLY):
+        if self.type == TYPE_ECHO_REQUEST or self.type == TYPE_ECHO_REPLY:
             self.next = echo(raw=raw[self.MIN_LEN:],prev=self)
         elif self.type == TYPE_DEST_UNREACH:
             self.next = unreach(raw=raw[self.MIN_LEN:],prev=self)
+        elif self.type == TYPE_TIME_EXCEED:
+            self.next = time_exceeded(raw=raw[self.MIN_LEN:],prev=self)
         else:
             self.next = raw[self.MIN_LEN:]
 

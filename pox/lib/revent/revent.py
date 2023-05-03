@@ -1,19 +1,16 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 #TODO:
 #-----
@@ -55,8 +52,8 @@ class Sink (EventMixin):
     # If a method name starts with _handle_ and ends with the name of
     # an event that the source publishes, the method is automatically
     # registered as an event handler.
-    #  
-    # This method will now be called whenever pox.core triggers a 
+    #
+    # This method will now be called whenever pox.core triggers a
     # ComponentRegistered event.
 
     # Most event handlers are passed an event object as a parameter (though
@@ -84,7 +81,7 @@ class Source (EventMixin):
 
     # In the above invocation, the argument is an instance of
     # ComponentRegistered (which is a subclass of Event).  The following is
-    # functionally equivalent, but has the nice property that 
+    # functionally equivalent, but has the nice property that
     # ComponentRegistered is never instantiated if there are no listeners.
     #self.raiseEvent(ComponentRegistered, component)
     # In both cases, "component" is passed to the __init__ method for the
@@ -102,6 +99,15 @@ import operator
 # weakrefs are used for some event handlers so that just having an event
 # handler set will not keep the source (publisher) alive.
 import weakref
+
+DEFAULT_PRIORITY = 0
+
+
+class ReventError (RuntimeError):
+  """
+  An exception caused by revent
+  """
+  pass
 
 
 _nextEventID = 0
@@ -151,9 +157,12 @@ class Event (object):
   """
   Superclass for events
   """
+  # halt and source aren't really class variables, but this way they get
+  # created on each instance without having to call the base constructor.
+  halt = False
+  source = None
   def __init__ (self):
-    self.halt = False
-    self.source = None
+    pass
 
   def _invoke (self, handler, *args, **kw):
     return handler(self, *args, **kw)
@@ -194,33 +203,32 @@ class EventMixin (object):
   # _eventMixin_events contains the set of events that the subclassing
   # object will raise.
   # You can't raise events that aren't in this set -- unless you set this
-  # to True in which all events are acceptable.
-  _eventMixin_events = set()
+  # to True in which case all events are acceptable.
+  _eventMixin_events = None
+
+  _eventMixin_initialized = False
 
   def _eventMixin_addEvents (self, events):
     for e in events:
       self._eventMixin_addEvent(e)
   def _eventMixin_addEvent (self, eventType):
     self._eventMixin_init()
-    assert self._eventMixin_events is not True
-    if False:
-      pass
-    #if self._eventMixin_events == True:
-    #  # Do nothing, all events already accepted!
-    #  # print warning?
-    #  return
-    elif self._eventMixin_events == None:
-      self._eventMixin_events = set()
     self._eventMixin_events.add(eventType)
 
   def __init__ (self):
     self._eventMixin_init()
 
   def _eventMixin_init (self):
-    if not hasattr(self, "_eventMixin_events"):
-      setattr(self, "_eventMixin_events", True)
+    if self._eventMixin_initialized: return
+    self._eventMixin_initialized = True
+    if self._eventMixin_events is None:
+      setattr(self, "_eventMixin_events", set())
     if not hasattr(self, "_eventMixin_handlers"):
       setattr(self, "_eventMixin_handlers", {})
+    if not hasattr(self, "_eventMixin_prioritized"):
+      setattr(self, "_eventMixin_prioritized", set())
+    #TODO: Avoid extra hash lookup by putting priority info on
+    #      the list of handlers instead of separate attribute.
 
   def raiseEventNoErrors (self, event, *args, **kw):
     """
@@ -232,6 +240,9 @@ class EventMixin (object):
     #      the specific handler that failed...
     try:
       return self.raiseEvent(event, *args, **kw)
+    except ReventError:
+      # That's bad...
+      raise
     except:
       if handleEventException is not None:
         import sys
@@ -246,9 +257,9 @@ class EventMixin (object):
     Returns the event object, unless it was never created (because there
     were no listeners) in which case returns None.
     """
-    self._eventMixin_init()
+    if self._eventMixin_initialized is False:
+      self._eventMixin_init()
 
-    classCall = False
     if isinstance(event, Event):
       eventType = event.__class__
       classCall = True
@@ -267,11 +278,14 @@ class EventMixin (object):
       kw = {}
       if event.source is None:
         event.source = self
+    else:
+      classCall = False
+
     #print("raise",event,eventType)
     if (self._eventMixin_events is not True
         and eventType not in self._eventMixin_events):
-      raise RuntimeError("Event %s not defined on object of type %s"
-                         % (eventType, type(self)))
+      raise ReventError("Event %s not defined on object of type %s"
+                        % (eventType, type(self)))
 
     # Create a copy so that it can be modified freely during event
     # processing.  It might make sense to change this.
@@ -312,7 +326,7 @@ class EventMixin (object):
     """
     Returns the number of listeners.
     """
-    return sum((len(x) for x in self._eventMixin_handlers.itervalues()))
+    return sum((len(x) for x in self._eventMixin_handlers.values()))
 
   def removeListener (self, handlerOrEID, eventType=None):
     """
@@ -377,14 +391,32 @@ class EventMixin (object):
     kw['byName'] = True
     return self.addListener(*args,**kw)
 
+  def add_listener (self, handler, event_type=None, event_name=None,
+                    once=False, weak=False, priority=DEFAULT_PRIORITY):
+    """
+    Add an event handler for an event triggered by this object (subscribe).
+
+    This is a replacement for addListener() (which is being deprecated).
+    """
+    assert not (event_type and event_name)
+    if (not event_type) and not (event_name):
+      if not handler.__name__.startswith("_handle_"):
+        raise RuntimeError("Could not infer event type")
+      event_name = handler.__name__.rsplit('_', 1)[-1]
+    by_name = True if event_name else False
+    t = event_name if by_name else event_type
+
+    return self.addListener(t, handler, once=once, weak=weak, byName=by_name,
+                            priority=priority)
+
   def addListener (self, eventType, handler, once=False, weak=False,
-                   priority=None, byName=False):
+                   priority=DEFAULT_PRIORITY, byName=False):
     """
     Add an event handler for an event triggered by this object (subscribe).
 
     eventType : event class object (e.g. ConnectionUp). If byName is True,
-                should be a string (e.g. "ConnectionUp") 
-    handler : function/method to be invoked when event is raised 
+                should be a string (e.g. "ConnectionUp")
+    handler : function/method to be invoked when event is raised
     once : if True, this handler is removed after being fired once
     weak : If handler is a method on object A, then listening to an event
            on object B will normally make B have a reference to A, so A
@@ -419,8 +451,8 @@ class EventMixin (object):
               fail = False
               break
       if fail:
-        raise RuntimeError("Event %s not defined on object of type %s"
-                           % (eventType, type(self)))
+        raise ReventError("Event %s not defined on object of type %s"
+                          % (eventType, type(self)))
     if eventType not in self._eventMixin_handlers:
       # if no handlers are already registered, initialize
       handlers = self._eventMixin_handlers[eventType] = []
@@ -435,8 +467,10 @@ class EventMixin (object):
     entry = (priority, handler, once, eid)
 
     handlers.append(entry)
-    if priority is not None:
+    if ( (priority != DEFAULT_PRIORITY) or
+        (eventType in self._eventMixin_prioritized) ):
       # If priority is specified, sort the event handlers
+      self._eventMixin_prioritized.add(eventType)
       handlers.sort(reverse = True, key = operator.itemgetter(0))
 
     return (eventType,eid)
@@ -452,7 +486,8 @@ class EventMixin (object):
     """
     return autoBindEvents(self, source, *args, **kv)
 
-  def addListeners (self, sink, prefix='', weak=False, priority=None):
+  def addListeners (self, sink, prefix='', weak=False,
+                    priority=DEFAULT_PRIORITY):
     """
     Automatically subscribe sink to our events.
 
@@ -462,7 +497,7 @@ class EventMixin (object):
     See also: listenTo(), autoBindEvents()
     """
     return autoBindEvents(sink, self, prefix, weak, priority)
-  
+
   def clearHandlers(self):
     """
     Remove all handlers from this object
@@ -470,7 +505,8 @@ class EventMixin (object):
     self._eventMixin_handlers = {}
 
 
-def autoBindEvents (sink, source, prefix='', weak=False, priority=None):
+def autoBindEvents (sink, source, prefix='', weak=False,
+                    priority=DEFAULT_PRIORITY):
   """
   Automatically set up listeners on sink for events raised by source.
 
@@ -512,7 +548,7 @@ def autoBindEvents (sink, source, prefix='', weak=False, priority=None):
     # get the method object
     a = getattr(sink, m)
     if callable(a):
-      # if it has the revent prefix signature, 
+      # if it has the revent prefix signature,
       if m.startswith("_handle" + prefix + "_"):
         event = m[8+len(prefix):]
         # and it is one of the events our source triggers
@@ -544,8 +580,8 @@ class CallProxy (object):
     removeData :  The identifier used for removal of the handler
     """
     self.source = weakref.ref(source, self._forgetMe)
-    self.obj = weakref.ref(handler.im_self, self._forgetMe)
-    self.method = handler.im_func
+    self.obj = weakref.ref(handler.__self__, self._forgetMe) # methods only!
+    self.method = handler.__func__
     self.removeData = removeData
     self.name = str(handler)
 
@@ -563,7 +599,6 @@ class CallProxy (object):
     if o is not None:
       return self.method(o, *args, **kw)
     print("callProxy object is gone!")
-    raise RuntimeError("callProxy object is gone!")
+    raise ReventError("callProxy object is gone!")
   def __str__ (self):
     return "<CallProxy for " + self.name + ">"
-

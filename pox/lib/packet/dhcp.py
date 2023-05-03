@@ -1,20 +1,17 @@
 # Copyright 2011,2013 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -58,10 +55,11 @@
 #======================================================================
 import struct
 import string
-from packet_utils import *
+from .packet_utils import *
 
-from packet_base import packet_base
+from .packet_base import packet_base
 import pox.lib.util as util
+from pox.lib.util import is_subclass
 from pox.lib.addresses import *
 
 _dhcp_option_unpackers = {}
@@ -279,7 +277,7 @@ class dhcp(packet_base):
                 o += chr(dhcp.PAD_OPT)
             return o
 
-        for k,v in self.options.iteritems():
+        for k,v in self.options.items():
             if k == dhcp.END_OPT: continue
             if k == dhcp.PAD_OPT: continue
             if isinstance(v, DHCPOption):
@@ -312,6 +310,9 @@ class dhcp(packet_base):
 
         if isinstance(self.chaddr, EthAddr):
           chaddr = self.chaddr.toRaw() + (b'\x00' * 10)
+        else:
+          chaddr = self.chaddr
+          if chaddr is None:chaddr = b'\x00' * 16
         fmt = '!BBBBIHHiiii16s64s128s4s'
         return struct.pack(fmt, self.op, self.htype, self.hlen,
                            self.hops, self.xid, self.secs, self.flags,
@@ -335,6 +336,15 @@ class dhcp(packet_base):
             length = len(val)
         self._raw_options += chr(length)
         self._raw_options += val
+
+    @property
+    def msg_type (self):
+        """
+        DHCP message type or None
+        """
+        opt = self.options.get(self.MSG_TYPE_OPT)
+        if opt is None: return None
+        return opt.type
 
 
 def dhcp_option_def (msg_type):
@@ -418,7 +428,7 @@ class DHCPIPsOptionBase (DHCPOption):
   Superclass for options which are a list of IP addresses
   """
   def __init__ (self, addrs=[]):
-    if isinstance(addrs, (basestring,IPAddr)):
+    if isinstance(addrs, (str,bytes,IPAddr)):
       self.addrs = [IPAddr(addrs)]
     else:
       self.addrs = [IPAddr(a) for a in addrs]
@@ -580,7 +590,8 @@ class DHCPParameterRequestOption (DHCPOption):
     return self
 
   def pack (self):
-    return b''.join(chr(x) for x in self.options)
+    opt = ((o.CODE if is_subclass(o, DHCPOption) else o) for o in self.options)
+    return b''.join(chr(x) for x in opt)
 
   def __repr__ (self):
     names = []
@@ -589,7 +600,7 @@ class DHCPParameterRequestOption (DHCPOption):
       if n is None or not hasattr(n, 'im_self'):
         n = "Opt/" + str(o)
       else:
-        n = n.im_self.__name__
+        n = n.__self__.__name__
         if n.startswith("DHCP"): n = n[4:]
         if n.endswith("Option"): n = n[:-6]
         if n == "": n = "Opt"

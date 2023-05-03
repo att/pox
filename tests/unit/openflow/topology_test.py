@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+#
+# Copyright 2011-2012 James McCauley
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 OpenFlow stuff for topology
 """
@@ -20,7 +35,7 @@ class MockSwitch(EventMixin):
   def __init__(self):
     EventMixin.__init__(self)
     self.connected = True
-    self._xid_generator = itertools.count(1).next
+    self._xid_generator = itertools.count(1).__next__
     self.sent = []
 
   def send(self, msg):
@@ -47,7 +62,7 @@ class OFSyncFlowTableTest(unittest.TestCase):
     s = self.s
 
     seen_ft_events = []
-    t.addListener(FlowTableModification, lambda(event): seen_ft_events.append(event))
+    t.addListener(FlowTableModification, lambda event: seen_ft_events.append(event))
 
     entry = TableEntry(priority=5, cookie=0x31415926, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:01")), actions=[ofp_action_output(port=5)])
     t.install(entry)
@@ -77,7 +92,7 @@ class OFSyncFlowTableTest(unittest.TestCase):
     s = self.s
 
     seen_ft_events = []
-    t.addListener(FlowTableModification, lambda(event): seen_ft_events.append(event))
+    t.addListener(FlowTableModification, lambda event: seen_ft_events.append(event))
 
     entry = TableEntry(priority=5, cookie=0x31415926, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:01")), actions=[ofp_action_output(port=5)])
     t.install(entry)

@@ -2,29 +2,27 @@
 
 # Copyright 2011-2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-# If you have PyPy 1.6+ in a directory called pypy alongside pox.py, we
+# If you have PyPy in a directory called pypy alongside pox.py, we
 # use it.
-# Otherwise, we try to use a Python interpreter called python2.7, which
-# is a good idea if you're using Python from MacPorts, for example.
+# Otherwise, we try to use a Python interpreter called python3, which
+# is a good idea if it's there.
 # We fall back to just "python" and hope that works.
 
 ''''true
-export OPT="-u -O"
+#export OPT="-u -O"
+export OPT="-u"
 export FLG=""
 if [ "$(basename $0)" = "debug-pox.py" ]; then
   export OPT=""
@@ -35,9 +33,10 @@ if [ -x pypy/bin/pypy ]; then
   exec pypy/bin/pypy $OPT "$0" $FLG "$@"
 fi
 
-if type python2.7 > /dev/null 2> /dev/null; then
-  exec python2.7 $OPT "$0" $FLG "$@"
+if type python3 > /dev/null 2> /dev/null; then
+  exec python3 $OPT "$0" $FLG "$@"
 fi
+
 exec python $OPT "$0" $FLG "$@"
 '''
 

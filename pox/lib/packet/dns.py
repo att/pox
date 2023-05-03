@@ -1,20 +1,17 @@
 # Copyright 2011,2012 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -92,12 +89,12 @@
 #   General cleaup/rewrite (code is/has gotten pretty bad)
 
 import struct
-from packet_utils import *
-from packet_utils import TruncatedException as Trunc
+from .packet_utils import *
+from .packet_utils import TruncatedException as Trunc
 
-from packet_base import packet_base
+from .packet_base import packet_base
 
-from pox.lib.addresses import IPAddr
+from pox.lib.addresses import IPAddr,IPAddr6,EthAddr
 
 rrtype_to_str = {
    1: "A",  # host address
@@ -131,7 +128,13 @@ rrclass_to_str = {
 class dns(packet_base):
     "DNS Packet struct"
 
+    MDNS_ADDRESS  = IPAddr('224.0.0.251')
+    MDNS6_ADDRESS = IPAddr6('ff02::fb')
+    MDNS_ETH      = EthAddr('01:00:5E:00:00:fb')
+    MDNS6_ETH     = EthAddr('33:33:00:00:00:fb')
+
     SERVER_PORT = 53
+    MDNS_PORT   = 5353
     MIN_LEN     = 12
 
     def __init__(self, raw=None, prev=None, **kw):
@@ -191,7 +194,7 @@ class dns(packet_base):
         bits1 |= (self.rcode & 0xf)
 
         s = struct.pack("!HBBHHHH", self.id, bits0, bits1,
-                        len(self.questions), len(self.answers), 
+                        len(self.questions), len(self.answers),
                         len(self.authorities), len(self.additional))
 
         def makeName (labels, term):
@@ -233,11 +236,14 @@ class dns(packet_base):
           return s
 
         def putData (s, r):
-          if r.qtype in (2,12,5,15):
+          if r.qtype in (2,12,5,15): # NS, PTR, CNAME, MX
             return putName(s, r.rddata)
-          elif r.qtype == 1:
+          elif r.qtype == 1: # A
             assert isinstance(r.rddata, IPAddr)
-            return s + r.rddata.toRaw()
+            return s + r.rddata.raw
+          elif r.qtype == 28: # AAAA
+            assert isinstance(r.rddata, IPAddr6)
+            return s + r.rddata.raw
           else:
             return s + r.rddata
 
@@ -292,7 +298,7 @@ class dns(packet_base):
         for i in range(0,total_questions):
             try:
                 query_head = self.next_question(raw, query_head)
-            except Exception, e:
+            except Exception as e:
                 self._exc(e, 'parsing questions')
                 return None
 
@@ -300,7 +306,7 @@ class dns(packet_base):
         for i in range(0,total_answers):
             try:
                 query_head = self.next_rr(raw, query_head, self.answers)
-            except Exception, e:
+            except Exception as e:
                 self._exc(e, 'parsing answers')
                 return None
 
@@ -308,7 +314,7 @@ class dns(packet_base):
         for i in range(0,total_auth_rr):
             try:
                 query_head = self.next_rr(raw, query_head, self.authorities)
-            except Exception, e:
+            except Exception as e:
                 self._exc(e, 'parsing authoritative name servers')
                 return None
 
@@ -316,7 +322,7 @@ class dns(packet_base):
         for i in range(0,total_add_rr):
             try:
                 query_head = self.next_rr(raw, query_head, self.additional)
-            except Exception, e:
+            except Exception as e:
                 self._exc(e, 'parsing additional resource records')
                 return None
 
@@ -422,6 +428,11 @@ class dns(packet_base):
             if dlen != 4:
                 raise Exception('(dns) invalid a data size',system='packet')
             return IPAddr(l[beg_index : beg_index + 4])
+        # AAAA
+        elif type == 28:
+            if dlen != 16:
+                raise Exception('(dns) invalid a data size',system='packet')
+            return IPAddr6.from_raw(l[beg_index : beg_index + dlen])
         # NS
         elif type == 2:
             return self.read_dns_name_from_index(l, beg_index)[1]
@@ -452,7 +463,7 @@ class dns(packet_base):
 
     # Utility classes for questions and RRs
 
-    class question:
+    class question (object):
 
         def __init__(self, name, qtype, qclass):
             self.name   = name
@@ -464,11 +475,11 @@ class dns(packet_base):
             if self.qtype in rrtype_to_str:
                 s += " " + rrtype_to_str[self.qtype]
             else:
-                s += " ??? "
+                s += " #"+str(self.qtype)
             if self.qclass in rrclass_to_str:
                 s += " " + rrclass_to_str[self.qclass]
             else:
-                s += " ??? "
+                s += " #"+str(self.qclass)
 
             return s
 
@@ -504,11 +515,11 @@ class dns(packet_base):
             if self.qtype in rrtype_to_str:
                 s += " " + rrtype_to_str[self.qtype]
             else:
-                s += " ??? "
+                s += " #" + str(self.qtype)
             if self.qclass in rrclass_to_str:
                 s += " " + rrclass_to_str[self.qclass]
             else:
-                s += " ??? "
+                s += " #" + str(self.qclass)
             s += " ttl:"+str(self.ttl)
             s += " rdlen:"+str(self.rdlen)
             s += " datalen:" + str(len(self.rddata))

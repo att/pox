@@ -1,22 +1,21 @@
-# Copyright 2011,2012 James McCauley
+# Copyright 2011-2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import pox.openflow.libopenflow_01 as of
 import struct
+from pox.lib.revent import EventMixin
+import pox.openflow
 
 def make_type_to_unpacker_table ():
   """
@@ -28,6 +27,69 @@ def make_type_to_unpacker_table ():
 
   top = max(of._message_type_to_class)
 
-  r = [of._message_type_to_class[i].unpack_new for i in range(0, top)]
+  r = [of._message_type_to_class[i].unpack_new for i in range(0, top+1)]
 
   return r
+
+
+class DPIDWatcher (EventMixin):
+  """
+  Strains OpenFlow messages by DPID
+  """
+
+  #TODO: Reference count handling
+
+  _eventMixin_events = pox.openflow.OpenFlowNexus._eventMixin_events
+
+  def __init__ (self, dpid, nexus = None, invert = False):
+
+    if nexus is None:
+      from pox.core import core
+      nexus = core.openflow
+
+    self.invert = invert
+
+    self._dpids = set()
+    if isinstance(dpid, str):
+      dpid = dpid.replace(',',' ')
+      dpid = dpid.split()
+    if isinstance(dpid, (list,tuple)):
+      for d in dpid:
+        self._add_dpid(d)
+    else:
+      self._add_dpid(dpid)
+
+    #core.listen_to_dependencies(self)
+
+    for ev in self._eventMixin_events:
+      nexus.addListener(ev, self._handler)
+
+  def _handler (self, event, *args, **kw):
+    dpid = getattr(event, 'dpid', None)
+    if dpid is None:
+      return
+
+    if self.invert:
+      if event.dpid in self._dpids: return
+    else:
+      if event.dpid not in self._dpids: return
+
+    if len(args) or len(kw):
+      log.warn("Custom invoke for %s", event)
+      # This is a warning because while I think this will always or almost
+      # always work, I didn't feel like checking.
+
+    self.raiseEventNoErrors(event)
+
+  def _add_dpid (self, dpid):
+    if dpid is True:
+      # Special case -- everything!
+      self._dpids = True
+      return
+    elif self._dpids is True:
+      self._dpids = set()
+    try:
+      dpid = int(dpid)
+    except:
+      dpid = str_to_dpid(dpid)
+    self._dpids.add(dpid)

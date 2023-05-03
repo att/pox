@@ -1,10 +1,20 @@
 #!/usr/bin/env python
-"""
-Implementation of an OpenFlow flow table
+#
+# Copyright 2011-2012 Andreas Wundsam
+# Copyright 2011-2012 Colin Scott
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-@author: Colin Scott (cs@cs.berkeley.edu)
-
-"""
 from collections import namedtuple
 
 import time
@@ -48,8 +58,8 @@ class TableEntryTest(unittest.TestCase):
     self.assertFalse(e.is_expired(now=5))
     self.assertTrue(e.is_expired(now=7))
     e.touch_packet(12, now=5)
-    self.assertEqual(e.counters["bytes"], 12)
-    self.assertEqual(e.counters["packets"], 1)
+    self.assertEqual(e.byte_count, 12)
+    self.assertEqual(e.packet_count, 1)
     self.assertFalse(e.is_expired(now=1))
     self.assertFalse(e.is_expired(now=7))
     self.assertFalse(e.is_expired(now=10))
@@ -99,62 +109,11 @@ class FlowTableTest(unittest.TestCase):
             ):
       [e.touch_packet(1, now=time) for e in t.entries if e.cookie in touch]
       t.remove_expired_entries(now=time)
-      self.assertEqual([e.cookie for e in t.entries ], remaining)
+      self.assertEqual(sorted([e.cookie for e in t.entries]), remaining)
 
-class SwitchFlowTableTest(unittest.TestCase):
-  def test_process_flow_mod_add(self):
-    """ test that simple insertion of a flow works"""
-    t = SwitchFlowTable()
-    t.process_flow_mod(ofp_flow_mod(priority=5, cookie=0x31415926, actions=[ofp_action_output(port=5)]))
-    self.assertEqual(len(t._table), 1)
-    e = t._table[0]
-    self.assertEqual(e.priority, 5)
-    self.assertEqual(e.cookie, 0x31415926)
-    self.assertEqual(e.actions, [ ofp_action_output(port=5)])
+  # def test_check_for_overlap_entries(self):
 
-  def test_process_flow_mod_modify(self):
-    """ test that simple removal of a flow works"""
-    def table():
-      t = SwitchFlowTable()
-      t.add_entry(TableEntry(priority=6, cookie=0x1, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:01"),nw_src="1.2.3.4"), actions=[ofp_action_output(port=5)]))
-      t.add_entry(TableEntry(priority=5, cookie=0x2, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:02"), nw_src="1.2.3.0/24"), actions=[ofp_action_output(port=6)]))
-      t.add_entry(TableEntry(priority=1, cookie=0x3, match=ofp_match(), actions=[]))
-      return t
 
-    t = table()
-    t.process_flow_mod(ofp_flow_mod(command = OFPFC_MODIFY, match=ofp_match(), actions = [ofp_action_output(port=1)]))
-    self.assertEquals([e.cookie for e in t.entries if e.actions == [ofp_action_output(port=1)] ], [1,2,3])
-    self.assertEquals(len(t.entries), 3)
-
-    t = table()
-    t.process_flow_mod(ofp_flow_mod(command = OFPFC_MODIFY, match=ofp_match(nw_src="1.2.0.0/16"), actions = [ofp_action_output(port=8)]))
-    self.assertEquals([e.cookie for e in t.entries if e.actions == [ofp_action_output(port=8)] ], [1,2])
-    self.assertEquals(len(t.entries), 3)
-
-    # non-matching OFPFC_MODIFY acts as add
-    t = table()
-    t.process_flow_mod(ofp_flow_mod(cookie=5, command = OFPFC_MODIFY, match=ofp_match(nw_src="2.2.0.0/16"), actions = [ofp_action_output(port=8)]))
-    self.assertEquals(len(t.entries), 4)
-    self.assertEquals([e.cookie for e in t.entries if e.actions == [ofp_action_output(port=8)] ], [5])
-
-  def test_process_flow_mod_modify_strict(self):
-    """ test that simple removal of a flow works"""
-    def table():
-      t = SwitchFlowTable()
-      t.add_entry(TableEntry(priority=6, cookie=0x1, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:01"),nw_src="1.2.3.4"), actions=[ofp_action_output(port=5)]))
-      t.add_entry(TableEntry(priority=5, cookie=0x2, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:02"), nw_src="1.2.3.0/24"), actions=[ofp_action_output(port=6)]))
-      t.add_entry(TableEntry(priority=1, cookie=0x3, match=ofp_match(), actions=[]))
-      return t
-
-    t = table()
-    t.process_flow_mod(ofp_flow_mod(command = OFPFC_MODIFY_STRICT, priority=1, match=ofp_match(), actions = [ofp_action_output(port=1)]))
-    self.assertEquals([e.cookie for e in t.entries if e.actions == [ofp_action_output(port=1)] ], [3])
-    self.assertEquals(len(t.entries), 3)
-
-    t = table()
-    t.process_flow_mod(ofp_flow_mod(command = OFPFC_MODIFY_STRICT, priority=5, match=ofp_match(dl_src=EthAddr("00:00:00:00:00:02"), nw_src="1.2.3.0/24"), actions = [ofp_action_output(port=8)]))
-    self.assertEquals([e.cookie for e in t.entries if e.actions == [ofp_action_output(port=8)] ], [2])
-    self.assertEquals(len(t.entries), 3)
 
 
 if __name__ == '__main__':

@@ -1,19 +1,16 @@
 # Copyright 2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 A super simple OpenFlow learning switch that installs rules for
@@ -35,6 +32,13 @@ log = core.getLogger()
 table = {}
 
 
+# To send out all ports, we can use either of the special ports
+# OFPP_FLOOD or OFPP_ALL.  We'd like to just use OFPP_FLOOD,
+# but it's not clear if all switches support this, so we make
+# it selectable.
+all_ports = of.OFPP_FLOOD
+
+
 # Handle messages the switch has sent us because it has no
 # matching rule.
 def _handle_PacketIn (event):
@@ -49,11 +53,8 @@ def _handle_PacketIn (event):
     # We don't know where the destination is yet.  So, we'll just
     # send the packet out all ports (except the one it came in on!)
     # and hope the destination is out there somewhere. :)
-    # To send out all ports, we can use either of the special ports
-    # OFPP_FLOOD or OFPP_ALL.  We'd like to just use OFPP_FLOOD,
-    # but it's not clear if all switches support this. :(
     msg = of.ofp_packet_out(data = event.ofp)
-    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+    msg.actions.append(of.ofp_action_output(port = all_ports))
     event.connection.send(msg)
   else:
     # Since we know the switch ports for both the source and dest
@@ -63,7 +64,7 @@ def _handle_PacketIn (event):
     msg.match.dl_src = packet.dst
     msg.actions.append(of.ofp_action_output(port = event.port))
     event.connection.send(msg)
-    
+
     # This is the packet that just came in -- we want to
     # install the rule and also resend the packet.
     msg = of.ofp_flow_mod()
@@ -76,7 +77,11 @@ def _handle_PacketIn (event):
     log.debug("Installing %s <-> %s" % (packet.src, packet.dst))
 
 
-def launch ():
+def launch (disable_flood = False):
+  global all_ports
+  if disable_flood:
+    all_ports = of.OFPP_ALL
+
   core.openflow.addListenerByName("PacketIn", _handle_PacketIn)
 
   log.info("Pair-Learning switch running.")

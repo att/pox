@@ -1,21 +1,20 @@
-# Copyright 2011 James McCauley
+# Copyright 2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from pox.core import core
+import logging
+import string
 
 def launch (__INSTANCE__=None, **kw):
   """
@@ -24,10 +23,26 @@ def launch (__INSTANCE__=None, **kw):
   For example, to turn off the verbose web logging, try:
   pox.py web.webcore log.level --web.webcore=INFO
   """
-  for k,v in kw.iteritems():
+  for k,v in kw.items():
     if v is True:
       # This means they did something like log.level --DEBUG
       v = k
       k = "" # Root logger
-    core.getLogger(k).setLevel(v)
+    try:
+      v = int(v)
+    except:
+      old = v
+      v = logging.DEBUG
+      def dofail ():
+        core.getLogger(k).error("Bad log level: %s. Defaulting to DEBUG.", old)
 
+      if (len(old) == 0) or (len(old.strip(string.ascii_uppercase)) != 0):
+        dofail()
+      else:
+        vv = getattr(logging, old, None)
+        if not isinstance(vv, int):
+          dofail()
+        else:
+          v = vv
+
+    core.getLogger(k).setLevel(v)

@@ -1,19 +1,16 @@
 # Copyright 2011,2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Various stuff for converting between OpenFlow and JSON-friendly
@@ -26,7 +23,7 @@ from pox.lib.util import fields_of,is_scalar
 import pox.openflow.libopenflow_01 as of
 
 def _fix_of_int (n):
-  if isinstance(n, basestring):
+  if isinstance(n, str):
     return getattr(of, n, None)
   return n
 
@@ -36,7 +33,7 @@ from pox.lib.util import dpidToStr
 from pox.lib.addresses import EthAddr, IPAddr
 
 def _fix_ethertype (n):
-  if isinstance(n, basestring):
+  if isinstance(n, str):
     try:
       if n.startswith("802.3/"):
         n = n.split("/",1)[1]
@@ -50,7 +47,7 @@ def _fix_ethertype (n):
   return n
 
 def _fix_proto (n):
-  if isinstance(n, basestring):
+  if isinstance(n, str):
     if not n.endswith("_PROTOCOL"):
       n += "_PROTOCOL"
     return getattr(ipv4, n)
@@ -69,7 +66,7 @@ def _fix_ip (n):
 import socket
 
 def _fix_port (n):
-  if isinstance(n, basestring):
+  if isinstance(n, str):
     return socket.getservbyname(n)
   return n
 
@@ -97,6 +94,7 @@ def _unfix_port (v):
 def _unfix_ip (v):
   v = v()
   if v[1] == 0:
+    if v[0] is None: return None
     return str(v[0])
   return "%s/%i" % v
 def _unfix_str (v):
@@ -119,10 +117,12 @@ _unfix_map['get_nw_dst'] = _unfix_ip
 def match_to_dict (m):
   d = {}
   #TODO: Use symbolic names
-  for k,func in _unfix_map.iteritems():
+  for k,func in _unfix_map.items():
     v = getattr(m, k)
     if v is None: continue
+    if k.startswith('get_'): k = k[4:]
     v = func(v)
+    if v is None: continue
     d[k] = v
   return d
 
@@ -130,7 +130,7 @@ def match_to_dict (m):
 def action_to_dict (a):
   d = {}
   d['type'] = of.ofp_action_type_map.get(a.type, a.type)
-  for k,v in fields_of(a).iteritems():
+  for k,v in fields_of(a).items():
     if k in ['type','length']: continue
     if k == "port":
       v = of.ofp_port_map.get(v,v)
@@ -160,7 +160,7 @@ def flow_stats_to_list (flowstats):
   for stat in flowstats:
     s = {}
     stats.append(s)
-    for k,v in fields_of(stat).iteritems():
+    for k,v in fields_of(stat).items():
       if k == 'length': continue
       if k.startswith('pad'): continue
       if k == 'match': v = match_to_dict(v)
@@ -218,7 +218,7 @@ _init()
 def dict_to_packet (d, parent=None):
   if isinstance(d, list):
     d = b''.join(chr(x) for x in data)
-  if isinstance(d, basestring):
+  if isinstance(d, str):
     return d
 
   payload = d.get('payload')
@@ -229,7 +229,7 @@ def dict_to_packet (d, parent=None):
   example = cls()
   del d['class']
 
-  for k,v in d.iteritems():
+  for k,v in d.items():
     assert not k.startswith('_')
     assert hasattr(example, k)
     assert k not in ['prev','next','raw','parsed']
@@ -250,7 +250,7 @@ def fix_parsed (m):
   """
   if m is None:
     return {"type":"raw","data":[]}
-  if isinstance(m, basestring):
+  if isinstance(m, str):
     return {"type":"raw","data":[ord(b) for b in m]}
   assert isinstance(m, packet_base)
   if not m.parsed:
@@ -258,7 +258,7 @@ def fix_parsed (m):
     u['unparsed_type'] = m.__class__.__name__
     return u
   r = {}
-  for k,v in fields_of(m, primitives_only = False).iteritems():
+  for k,v in fields_of(m, primitives_only = False).items():
     if is_scalar(v):
       r[k] = v
     elif isinstance(v, (IPAddr, EthAddr)):
@@ -303,13 +303,20 @@ def list_switches (ofnexus = None):
     ofnexus = core.openflow
 
   r = []
-  for dpid,con in ofnexus._connections.iteritems():
+  for dpid,con in ofnexus._connections.items():
     ports = []
-    for p in con.features.ports:
-      ports.append({
+    for p in con.ports.values():
+      pdict = {
         'port_no':p.port_no,
         'hw_addr':str(p.hw_addr),
-        'name':p.name})
+        'name':p.name}
+      for bit,name in of.ofp_port_config_map.items():
+        if p.config & bit:
+          pdict[name.split('OFPPC_', 1)[-1].lower()] = True
+      for bit,name in of.ofp_port_state_map.items():
+        if p.state & bit:
+          pdict[name.split('OFPPS_', 1)[-1].lower()] = True
+      ports.append(pdict)
     ports.sort(key=lambda item:item['port_no'])
 
     rr = {
@@ -320,4 +327,3 @@ def list_switches (ofnexus = None):
 
   r.sort(key=lambda item:item['dpid'])
   return r
-

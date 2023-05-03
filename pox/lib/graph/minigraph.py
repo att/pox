@@ -1,19 +1,16 @@
 # Copyright 2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 A minimal reimplementation of enough of NetworkX's MultiGraph so that
@@ -22,6 +19,7 @@ ideal way to store the underlying graph, but it'll work for now.
 """
 
 from collections import defaultdict as ddict
+from pox.lib.util import first_of
 
 
 def _fix_nbunch (nbunch, cls = set):
@@ -43,8 +41,8 @@ class MultiGraph (object):
 
   def nodes (self, data = False):
     if not data:
-      return self._nodes.keys()
-    return self._nodes.items()
+      return list(self._nodes.keys())
+    return list(self._nodes.items())
 
   def edges (self, nbunch = None, data = False, keys = False):
     def fix (a,b):
@@ -56,8 +54,8 @@ class MultiGraph (object):
 
     edges = {}
 
-    for e1,otherEnd in self._edges.iteritems():
-      for e2,rest in otherEnd.iteritems():
+    for e1,otherEnd in self._edges.items():
+      for e2,rest in otherEnd.items():
         if nbunch is not None:
           if e1 not in nbunch: continue
           if len(nbunch) > 1 and e2 not in nbunch: continue
@@ -68,8 +66,8 @@ class MultiGraph (object):
         edges[e] = rest
 
     r = []
-    for nodes,edgelist in edges.iteritems():
-      for k,d in edgelist.iteritems():
+    for nodes,edgelist in edges.items():
+      for k,d in edgelist.items():
         if data and keys:
           r.append((nodes[0],nodes[1],k,d)) # Is the order right?
         elif data:
@@ -97,7 +95,7 @@ class MultiGraph (object):
       self._nodes[node] = attr
 
   def remove_node (self, node):
-    others = self._edges[node].keys()
+    others = list(self._edges[node].keys())
     del self._edges[node]
     for other in others:
       if other == node: continue
@@ -130,7 +128,7 @@ class MultiGraph (object):
 
   def remove_edge (self, node1, node2, key=None):
     if key is None:
-      key = self._edges[node1][node2].keys()[0] # First one is fine
+      key = first_of(self._edges[node1][node2].keys()) # First one is fine
     del self._edges[node1][node2][key]
     del self._edges[node2][node1][key]
 
@@ -142,12 +140,10 @@ class MultiGraph (object):
 
   def __getitem__ (self, node):
     o = {}
-    for k0,v0 in self._edges[node].iteritems():
+    for k0,v0 in self._edges[node].items():
       if k0 not in o: o[k0] = {}
-      for k1,v1 in v0.iteritems():
+      for k1,v1 in v0.items():
         if k1 not in o[k0]: o[k0][k1] = {}
         o[k0][k1] = v1
 
     return o # This is self._edges but as a normal dict
-
-

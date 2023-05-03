@@ -1,19 +1,16 @@
-# Copyright 2011 James McCauley
+# Copyright 2011,2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 The POX packet library for packet parsing and creation.
@@ -27,57 +24,81 @@ Could still use more work.
 
 # None of this is probably that big, and almost all of it gets loaded
 # under most circumstances anyway.  Let's just load all of it.
-import arp as ARP
-import dhcp as DHCP
-import dns as DNS
-import eap as EAP
-import eapol as EAPOL
-import ethernet as ETHERNET
-import icmp as ICMP
-import ipv4 as IPV4
-import lldp as LLDP
-import tcp as TCP
-import udp as UDP
-import vlan as VLAN
+from . import arp as ARP
+from . import dhcp as DHCP
+from . import dns as DNS
+from . import eap as EAP
+from . import eapol as EAPOL
+from . import ethernet as ETHERNET
+from . import ipv4 as IPV4
+from . import ipv6 as IPV6
+from . import icmp as ICMP
+from . import icmpv6 as ICMPV6
+from . import lldp as LLDP
+from . import tcp as TCP
+from . import udp as UDP
+from . import vlan as VLAN
+from . import mpls as MPLS
+from . import llc as LLC
+from . import rip as RIP
+from . import gre as GRE
+from . import vxlan as VXLAN
 
-from arp import *
-from dhcp import *
-from dns import *
-from eap import *
-from eapol import *
-from ethernet import *
-from icmp import *
-from ipv4 import *
-from lldp import *
-from tcp import *
-from udp import *
-from vlan import *
+from .gre import *
+from .vxlan import *
+from .rip import *
+from .arp import *
+from .dhcp import *
+from .dns import *
+from .eap import *
+from .eapol import *
+from .ethernet import *
+from .ipv6 import *
+from .ipv4 import *
+from .icmpv6 import *
+from .icmp import *
+from .lldp import *
+from .tcp import *
+from .udp import *
+from .vlan import *
+from .mpls import *
+from .llc import *
 
 __all__ = [
+  'rip',
   'arp',
   'dhcp',
   'dns',
   'eap',
   'eapol',
   'ethernet',
-  'icmp',
   'ipv4',
+  'ipv6',
+  'icmp',
+  'icmpv6',
   'lldp',
   'tcp',
   'tcp_opt',
   'udp',
   'vlan',
+  'mpls',
+  'llc',
 
+  'RIP',
   'ARP',
   'DHCP',
   'DNS',
   'EAP',
   'EAPOL',
   'ETHERNET',
-  'ICMP',
   'IPV4',
+  'IPV6',
+  'ICMP',
+  'ICMPV6',
   'LLDP',
   'TCP',
   'UDP',
   'VLAN',
+  'MPLS',
+  'LLC',
 ]

@@ -1,19 +1,16 @@
 # Copyright 2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 A simple JSON-RPC-ish web service for interacting with OpenFlow.
@@ -44,6 +41,21 @@ Example - Make a hub:
 curl -i -X POST -d '{"method":"set_table","params":{"dpid":
  "00-00-00-00-00-01","flows":[{"actions":[{"type":"OFPAT_OUTPUT",
  "port":"OFPP_ALL"}],"match":{}}]}}' http://127.0.0.1:8000/OF/
+
+Note that if you are using web.authentication, you will want to
+include "--user username:password" on the above curl commandline.
+Furthermore, if you are using POX CookieGuard (the default), you
+will probably want to add something like "-L -b /dev/null".  This
+enables following redirects and the cookie engine.
+
+IMPORTANT NOTE:
+Per the specifiction, JSON-RPC requests without an "id" field are
+*notifications* which do not require and should not receive responses.
+In other words, if you want to get a reply to a request, you must
+include an "id" member in the request.  You can, for example, just
+set it to 1 if you don't have anything better to set it to.  If you
+are using any of the "get" functions (like get_switches), you
+surely want to do this.
 """
 
 import sys

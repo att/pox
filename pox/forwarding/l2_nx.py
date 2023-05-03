@@ -16,7 +16,7 @@
 A quick-and-dirty learning switch for Open vSwitch
 
 This learning switch requires Nicira extensions as found in Open vSwitch.
-Run with something like:
+Furthermore, you must enable packet-in conversion.  Run with something like:
   ./pox.py openflow.nicira --convert-packet-in forwarding.l2_nx
 
 This forwards based on ethernet source and destination addresses.  Where
@@ -117,9 +117,10 @@ def _handle_ConnectionUp (event):
 
 
 def launch ():
-  assert core.NX, "Nicira extensions required"
-  assert core.NX.convert_packet_in, "PacketIn conversion required"
-
-  core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
-
-  log.info("Simple NX switch running.")
+  def start ():
+    if not core.NX.convert_packet_in:
+      log.error("PacketIn conversion required")
+      return
+    core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
+    log.info("Simple NX switch running.")
+  core.call_when_ready(start, ['NX','openflow'])

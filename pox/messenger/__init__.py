@@ -1,21 +1,18 @@
 # Copyright 2011,2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-"""  
+"""
 The POX Messenger system.
 
 
@@ -25,7 +22,7 @@ consumed by external clients.
 Sometimes a controller might need to interact with the outside world.
 Sometimes you need to integrate with an existing piece of software and
 maybe you don't get to choose how you communicate with it.  Other times,
-you have the opportunity and burden of rolling your own.  The Messenger 
+you have the opportunity and burden of rolling your own.  The Messenger
 system is meant to help you with the latter case.
 
 In short, channels are a system for communicating between POX and
@@ -64,28 +61,29 @@ defaultDecoder = json.JSONDecoder()
 class ChannelJoin (Event):
   """ Fired on a channel when a client joins. """
   def __init__ (self, connection, channel, msg = {}):
-    Event.__init__(self)
     self.con = connection
     self.channel = channel
     self.msg = msg
 
+class ConnectionOpened (Event):
+  """ Fired by the nexus for each new connection """
+  def __init__ (self, connection):
+    self.con = connection
+
 class ConnectionClosed (Event):
   """ Fired on a connection when it closes. """
   def __init__ (self, connection):
-    Event.__init__(self)
     self.con = connection
 
 class ChannelLeave (Event):
   """ Fired on a channel when a client leaves. """
   def __init__ (self, connection, channel):
-    Event.__init__(self)
     self.con = connection
     self.channel = channel
 
 class ChannelCreate (Event):
   """ Fired on a Nexus when a channel is created. """
   def __init__ (self, channel):
-    Event.__init__(self)
     self.channel = channel
 
 class ChannelDestroy (Event):
@@ -94,7 +92,6 @@ class ChannelDestroy (Event):
   Set .keep = True to keep the channel after all.
   """
   def __init__ (self, channel):
-    Event.__init__(self)
     self.channel = channel
     self.keep = False
 
@@ -103,7 +100,6 @@ class ChannelDestroyed (Event):
   Fired on the channel and its Nexus right after a channel is destroyed.
   """
   def __init__ (self, channel):
-    Event.__init__(self)
     self.channel = channel
 
 class MissingChannel (Event):
@@ -112,7 +108,6 @@ class MissingChannel (Event):
   You can create the channel in response to this.
   """
   def __init__ (self, connection, channel_name, msg):
-    Event.__init__(self)
     self.con = connection
     self.channel_name = channel_name
     self.msg = msg
@@ -128,7 +123,6 @@ class MessageReceived (Event):
   def _handle_MessageReceived (event, msg):
   """
   def __init__ (self, connection, channel, msg):
-    Event.__init__(self)
     self.con = connection
     self.msg = msg
     self.channel = channel
@@ -157,7 +151,7 @@ def _get_nexus (nexus):
       log.error(s)
       raise RuntimeError(s)
     return getattr(core, nexus)
-  assert isinstance(nexus, MessengerNexus)
+  assert isinstance(nexus, MessengerNexus), nexus
   return nexus
 
 
@@ -169,7 +163,7 @@ class Transport (object):
     """ Forget about a connection """
     raise RuntimeError("Not implemented")
 
- 
+
 class Connection (EventMixin):
   """
   Superclass for Connections.
@@ -193,12 +187,23 @@ class Connection (EventMixin):
     self._transport = transport
     self._newlines = False
 
+    # If we connect to another messenger, this contains our session ID as far
+    # as it is concerned.
+    self._remote_session_id = None
+
     # Transports that don't do their own encapsulation can use _recv_raw(),
     # which uses this.  (Such should probably be broken into a subclass.)
     self._buf = bytes()
 
     key,num = self._transport._nexus.generate_session()
     self._session_id,self._session_num = key,num
+
+  def _rx_welcome (self, event):
+    """
+    Called by the default channelbot if we connect to another messenger.
+    """
+    self._remote_session_id = event.msg.get('session_id')
+    log.debug("%s welcomed as %s.", self, self._remote_session_id)
 
   def _send_welcome (self):
     """
@@ -213,7 +218,7 @@ class Connection (EventMixin):
     if self._is_connected is False: return
     self._transport._forget(self)
     self._is_connected = False
-    for name,chan in self._transport._nexus._channels.items():
+    for name,chan in list(self._transport._nexus._channels.items()):
       chan._remove_member(self)
     self.raiseEventNoErrors(ConnectionClosed, self)
     #self._transport._nexus.raiseEventNoErrors(ConnectionClosed, self)
@@ -324,7 +329,7 @@ class Channel (EventMixin):
     associated (defaults to core.MessengerNexus).
     """
     EventMixin.__init__(self)
-    assert isinstance(name, basestring)
+    assert isinstance(name, str)
     self._name = name
 
     self._nexus = _get_nexus(nexus)
@@ -381,7 +386,7 @@ class Channel (EventMixin):
   def send (self, msg):
     d = dict(msg)
     d['CHANNEL'] = self._name
-    for r in self._members:
+    for r in list(self._members):
       if not r.is_connected: continue
       r.send(d)
 
@@ -590,6 +595,10 @@ class DefaultChannelBot (ChannelBot):
     log.info("Default channel got: " + str(value))
     self.reply(event, test = value.upper())
 
+  def _exec_cmd_welcome (self, event):
+    # We get this if we're connecting to another messenger.
+    event.con._rx_welcome(event)
+
 
 class MessengerNexus (EventMixin):
   """
@@ -603,6 +612,7 @@ class MessengerNexus (EventMixin):
     ChannelDestroy,
     ChannelDestroyed,
     ChannelCreate,
+    ConnectionOpened,
   ])
 
   def __init__ (self):
@@ -625,17 +635,21 @@ class MessengerNexus (EventMixin):
 
     key = str(random.random()) + str(time.time()) + str(r)
     key += str(id(key)) + self._session_salt
+    key = key.encode()
 
-    key = b32encode(hashlib.md5(key).digest()).upper().replace('=','')
-   
+    key = b32encode(hashlib.md5(key).digest()).upper().replace(b'=',b'')
+
     def alphahex (r):
       """ base 16 on digits 'a' through 'p' """
       r=hex(r)[2:].lower()
-      return ''.join(chr((10 if ord(x) >= 97 else 49) + ord(x)) for x in r)
+      return bytes(((10 if x >= 97 else 49) + x) for x in r)
 
     key = alphahex(r) + key
 
     return key,r
+
+  def register_session (self, session):
+    self.raiseEventNoErrors(ConnectionOpened, session)
 
   def get_channel (self, name, create = True, temporary = False):
     if name is None: name = ""
@@ -677,4 +691,3 @@ class MessengerNexus (EventMixin):
 
 def launch ():
   core.registerNew(MessengerNexus)
-

@@ -1,19 +1,16 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 This is the main OpenFlow module.
@@ -38,16 +35,25 @@ NOTE: This module is usually automatically loaded by pox.py
 
 from pox.lib.revent import *
 from pox.lib.util import dpidToStr
-import libopenflow_01 as of
+from . import libopenflow_01 as of
 from pox.lib.packet.ethernet import ethernet
+
+
+class ConnectionHandshakeComplete (Event):
+  """
+  Event when a switch handshake completes
+
+  Fired immediately before ConnectionUp
+  """
+  def __init__ (self, connection):
+    self.connection = connection
+    self.dpid = connection.dpid
 
 class ConnectionUp (Event):
   """
-  Event raised when the connection to an OpenFlow switch has been
-  established.
+  Raised when a connection to a switch has been established.
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.dpid = connection.dpid
     self.ofp = ofp
@@ -59,31 +65,28 @@ class FeaturesReceived (Event):
   This generally happens as part of a connection automatically.
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.dpid = connection.dpid
     self.ofp = ofp
 
 class ConnectionDown (Event):
   """
-  Event raised when the connection to an OpenFlow switch has been
-  lost.
+  Raised when a connection to switch has been lost.
   """
   def __init__ (self, connection):
-    Event.__init__(self)
     self.connection = connection
     self.dpid = connection.dpid
 
 class PortStatus (Event):
   """
   Fired in response to port status changes.
+
   added (bool) - True if fired because a port was added
   deleted (bool) - True if fired because a port was deleted
   modified (bool) - True if fired because a port was modified
   port (int) - number of port in question
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.dpid = connection.dpid
     self.ofp = ofp
@@ -95,6 +98,7 @@ class PortStatus (Event):
 class FlowRemoved (Event):
   """
   Raised when a flow entry has been removed from a flow table.
+
   This may either be because of a timeout or because it was removed
   explicitly.
   Properties:
@@ -104,7 +108,6 @@ class FlowRemoved (Event):
   deleted (bool) - True if deleted explicitly
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.dpid = connection.dpid
     self.ofp = ofp
@@ -123,17 +126,25 @@ class FlowRemoved (Event):
 
 class RawStatsReply (Event):
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.ofp = ofp     # Raw ofp message(s)
 
+  @property
+  def dpid (self):
+    return self.connection.dpid
+
 class StatsReply (Event):
-  """ Abstract superclass for all stats replies """
+  """
+  Abstract superclass for all stats replies
+  """
   def __init__ (self, connection, ofp, stats):
-    Event.__init__(self)
     self.connection = connection
     self.ofp = ofp     # Raw ofp message(s)
     self.stats = stats # Processed
+
+  @property
+  def dpid (self):
+    return self.connection.dpid
 
 class SwitchDescReceived (StatsReply):
   pass
@@ -156,12 +167,12 @@ class QueueStatsReceived (StatsReply):
 class PacketIn (Event):
   """
   Fired in response to PacketIn events
+
   port (int) - number of port the packet came in on
   data (bytes) - raw packet data
   parsed (packet subclasses) - pox.lib.packet's parsed version
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.ofp = ofp
     self.port = ofp.in_port
@@ -183,10 +194,10 @@ class PacketIn (Event):
 
 class ErrorIn (Event):
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.ofp = ofp
     self.xid = ofp.xid
+    self.dpid = connection.dpid
     self.should_log = True # If this remains True, an error will be logged
 
   def asString (self):
@@ -225,10 +236,10 @@ class ErrorIn (Event):
 class BarrierIn (Event):
   """
   Fired in response to a barrier reply
+
   xid (int) - XID of barrier request
   """
   def __init__ (self, connection, ofp):
-    Event.__init__(self)
     self.connection = connection
     self.ofp = ofp
     self.dpid = connection.dpid
@@ -241,6 +252,31 @@ class ConnectionIn (Event):
     self.dpid = connection.dpid
     self.nexus = None
 
+class ConfigurationReceived (Event):
+  """
+  Fired in response to OFPT_GET_CONFIG_REPLY
+  """
+  def __init__ (self, connection, ofp):
+    self.connection = connection
+    self.ofp = ofp
+    self.dpid = connection.dpid
+    self.xid = ofp.xid
+
+  @property
+  def flags (self):
+    return self.ofp.flags
+
+  @property
+  def miss_send_len (self):
+    return self.ofp.miss_send_len
+
+  @property
+  def drop_fragments (self):
+    return (self.ofp.flags & of.OFPC_FRAG_MASK) == of.OFPC_FRAG_DROP
+
+  @property
+  def reassemble_fragments (self):
+    return (self.ofp.flags & of.OFPC_FRAG_MASK) == of.OFPC_FRAG_REASM
 
 
 class OpenFlowConnectionArbiter (EventMixin):
@@ -274,7 +310,7 @@ class OpenFlowConnectionArbiter (EventMixin):
 
 class ConnectionDict (dict):
   def __iter__ (self):
-    return self.itervalues()
+    return iter(self.values())
 
   def __contains__ (self, item):
     v = dict.__contains__(self, item)
@@ -283,10 +319,10 @@ class ConnectionDict (dict):
 
   @property
   def dpids (self):
-    return self.keys()
+    return list(self.keys())
 
   def iter_dpids (self):
-    return self.iterkeys()
+    return iter(self.keys())
 
 
 class OpenFlowNexus (EventMixin):
@@ -298,11 +334,11 @@ class OpenFlowNexus (EventMixin):
   specific connections.
   """
   _eventMixin_events = set([
+    ConnectionHandshakeComplete,
     ConnectionUp,
     ConnectionDown,
     FeaturesReceived,
     PortStatus,
-    FlowRemoved,
     PacketIn,
     BarrierIn,
     ErrorIn,
@@ -314,6 +350,7 @@ class OpenFlowNexus (EventMixin):
     PortStatsReceived,
     QueueStatsReceived,
     FlowRemoved,
+    ConfigurationReceived,
   ])
 
   # Bytes to send to controller when a packet misses all flows
@@ -354,7 +391,7 @@ class OpenFlowNexus (EventMixin):
       return False
 
   def _handle_DownEvent (self, event):
-    for c in self._connections.values():
+    for c in list(self._connections.values()):
       try:
         c.disconnect()
       except:
@@ -368,11 +405,14 @@ class OpenFlowNexus (EventMixin):
       return True
     return False
 
-def launch (default_arbiter=True):
+def _launch (default_arbiter=True):
   from pox.core import core
-  if core.hasComponent("openflow"):
-    return
   if default_arbiter:
     core.registerNew(OpenFlowConnectionArbiter)
   core.register("openflow", OpenFlowNexus())
 
+def launch (default_arbiter=True):
+  from pox.core import core
+  if core.hasComponent("openflow"):
+    return
+  return _launch(default_arbiter)

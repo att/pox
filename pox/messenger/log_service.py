@@ -1,19 +1,16 @@
 # Copyright 2011,2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 This is a messenger service for working with the log.
@@ -135,7 +132,7 @@ class LogHandler (logging.Handler):
     if "setLevels" in params:
       levels = params['setLevels']
       if isinstance(levels, dict):
-        for k,v in levels.iteritems():
+        for k,v in levels.items():
           l = core.getLogger(k)
           l.setLevel(v)
       else:
@@ -181,7 +178,7 @@ def _process_commands (msg):
   def get (key):
     r = msg.get(key)
     if r is not None:
-      if not isinstance(r, list):
+      if not isinstance(r, dict):
         r = {None:r}
     else:
       return {}
@@ -191,25 +188,25 @@ def _process_commands (msg):
   raiseLevels = get("raiseLevels") # more verbose
   setLevels = get("setLevels")
 
-  for k,v in lowerLevels.iteritems():
+  for k,v in lowerLevels.items():
     logger = core.getLogger(k)
     level = logging._checkLevel(v)
     if not l.isEnabledFor(level+1):
       logger.setLevel(v)
 
-  for k,v in raiseLevels.iteritems():
+  for k,v in raiseLevels.items():
     logger = core.getLogger(k)
     if not l.isEnabledFor(v):
       logger.setLevel(v)
 
-  for k,v in setLevels.iteritems():
+  for k,v in setLevels.items():
     logger = core.getLogger(k)
     logger.setLevel(v)
 
   message = msg.get("message", None)
   if message:
     level = msg.get("level", "DEBUG")
-    if isinstance(level, basestring):
+    if isinstance(level, str):
       import logging
       if not level.isalpha():
         level = logging.DEBUG
@@ -256,4 +253,3 @@ def launch (nexus = "MessengerNexus"):
     real_nexus.addListener(ChannelCreate, _handle_new_channel)
 
   core.call_when_ready(start, nexus, args=[nexus])
-

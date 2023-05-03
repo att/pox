@@ -1,20 +1,17 @@
 # Copyright 2011 James McCauley
 # Copyright 2008 (C) Nicira, Inc.
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # This file is derived from the packet library in NOX, which was
 # developed by Nicira, Inc.
@@ -91,7 +88,7 @@ class packet_base (object):
         #TODO: Remove?
         lg.warning(*args)
 
-    def __nonzero__(self):
+    def __bool__(self):
         return self.parsed is True
 
     def __len__(self):
@@ -120,7 +117,7 @@ class packet_base (object):
                 break
               s = ''
               for t in range(min(len(p), 5)):
-                s += "%02x " % (ord(p[t]),)
+                s += "%02x " % (p[t],)
               if len(p) > 5: s += "..."
               s = s.rstrip()
               m.append("[%s bytes: " % (len(p),) + s + "]")
@@ -139,7 +136,7 @@ class packet_base (object):
         """
         Find the specified protocol layer based on its class type or name.
         """
-        if not isinstance(proto, basestring):
+        if not isinstance(proto, str):
             proto = proto.__name__
         if self.__class__.__name__ == proto and self.parsed:
             return self
@@ -174,7 +171,7 @@ class packet_base (object):
         elif type(payload) == bytes:
             self.next = payload
         else:
-            raise TypeError("payload must be string or packet subclass")
+            raise TypeError("payload must be bytes or packet subclass")
 
     def parse(self, raw):
         '''Override me with packet parsing code'''
@@ -195,12 +192,17 @@ class packet_base (object):
     def pack(self):
         '''Convert header and payload to bytes'''
 
+        if self.parsed is False and self.raw is not None and self.next is None:
+          return self.raw
+
         self.pre_hdr()
 
         if self.next == None:
             return self.hdr(b'')
         elif isinstance(self.next, packet_base):
             rest = self.next.pack()
+        elif isinstance(self.next, str):
+            rest = self.next.encode()
         else:
             rest = self.next
 

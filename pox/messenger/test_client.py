@@ -2,20 +2,17 @@
 
 # Copyright 2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 This is NOT a POX component.  It's a little tool to test out the messenger.
@@ -29,25 +26,25 @@ class JSONDestreamer (object):
   import json
   decoder = json.JSONDecoder()
   def __init__ (self, callback = None):
-    self.data = ''
+    self._buf = b''
     self.callback = callback if callback else self.rx
 
   def push (self, data):
-    if len(self.data) == 0:
+    if len(self._buf) == 0:
       data = data.lstrip()
-    self.data += data
+    self._buf += data
     try:
-      while len(self.data) > 0:
-        r,off = self.decoder.raw_decode(self.data)
+      while len(self._buf) > 0:
+        r,off = self.decoder.raw_decode(self._buf.decode())
 
-        self.data = self.data[off:].lstrip()
+        self._buf = self._buf[off:].lstrip()
         self.callback(r)
     except ValueError:
       pass
 
   def rx (self, data):
     import json
-    print "Recv:", json.dumps(data, indent=4)
+    print("Recv:", json.dumps(data, indent=4))
 
 jd = JSONDestreamer()
 done = False
@@ -56,7 +53,7 @@ def reader (socket):
   global done
   while True:
     d = socket.recv(1024)
-    if d == "":
+    if d == b"":
       done = True
       break
     jd.push(d)
@@ -69,8 +66,8 @@ def channel (ch):
 import readline
 
 def main (addr = "127.0.0.1", port = 7790):
-  print "Connecting to %s:%i" % (addr,port)
   port = int(port)
+  print("Connecting to %s:%i" % (addr,port))
 
   sock = socket.create_connection((addr, port))
 
@@ -81,7 +78,7 @@ def main (addr = "127.0.0.1", port = 7790):
   while not done:
     try:
       #print ">",
-      m = raw_input()
+      m = input()
       if len(m) == 0: continue
       m = eval(m)
       if not isinstance(m, dict):
@@ -101,3 +98,11 @@ def main (addr = "127.0.0.1", port = 7790):
 if __name__ == "__main__":
   import sys
   main(*sys.argv[1:])
+else:
+  # This will get run if you try to run this as a POX component.
+  def launch ():
+    from pox.core import core
+    log = core.getLogger()
+    log.critical("This isn't a POX component.")
+    log.critical("Please see the documentation.")
+    raise RuntimeError("This isn't a POX component.")

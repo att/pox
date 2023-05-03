@@ -1,23 +1,21 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import pox.lib.recoco as recoco
 import pox.lib.revent as revent
 import threading
+from functools import partial
 
 class ReventWaiter (revent.EventMixin):
   def __init__ (self):
@@ -29,11 +27,20 @@ class ReventWaiter (revent.EventMixin):
     self._wakeLock = threading.Lock()
     self._wakeable = False
 
-  def registerForEvent (self, eventType, once=False, weak=False, priority=None):
-    return self.addListener(eventType, self._eventHandler, once, weak, priority)
+  def registerForEventByName (self, source, eventName,
+                              once=False, weak=False, priority=None):
+    return source.addListenerByName(eventName,
+                                    partial(self._eventHandler, source),
+                                    once=once, weak=weak, priority=priority)
 
-  def _eventHandler (self, *args, **kw):
-    self._events.append((args, kw))
+  def registerForEvent (self, source, eventType,
+                        once=False, weak=False, priority=None):
+    return source.addListener(eventType,
+                              partial(self._eventHandler, source),
+                              once=once, weak=weak, priority=priority)
+
+  def _eventHandler (self, src, *args, **kw):
+    self._events.append((src, args, kw))
     self._check()
 
   def _check (self):
@@ -58,13 +65,38 @@ class ReventWaiter (revent.EventMixin):
     except:
       return None
 
+  def getEvents (self):
+    r = []
+    while True:
+      try:
+        r.append(self._events.popleft())
+      except:
+        break
+    return r
+
+  def waitAll (self):
+    def cb (task):
+      return self.getEvents()
+    return WaitOnEvents(self, rf=cb)
+
+  def waitOne (self):
+    def cb (task):
+      return self.getEvent()
+    return WaitOnEvents(self, rf=cb)
+
+
+
 class WaitOnEvents (recoco.BlockingOperation):
-  def __init__ (self, eventWaiter):
+  def __init__ (self, eventWaiter, rf=None):
     self._waiter = eventWaiter
+    self._rf = rf
+
+  def _default_rf (self):
+    return self._waiter
 
   def execute (self, task, scheduler):
     #Next two should go into reset()?
-    task.rv = self._waiter
+    task.rf = self._rf if self._rf else self._default_rf
     self._waiter._task = task
     self._waiter._scheduler = scheduler
     self._waiter._reset()

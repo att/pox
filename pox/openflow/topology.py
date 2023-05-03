@@ -1,19 +1,16 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 OpenFlow doesn't know anything about Topology, and Topology doesn't
@@ -28,7 +25,7 @@ uses them to populate and manipulate Topology.
 import itertools
 
 from pox.lib.revent import *
-import libopenflow_01 as of
+from . import libopenflow_01 as of
 from pox.openflow import *
 from pox.core import core
 from pox.topology.topology import *
@@ -107,7 +104,7 @@ class OpenFlowTopology (object):
 class OpenFlowPort (Port):
   """
   A subclass of topology.Port for OpenFlow switch ports.
-  
+
   Adds the notion of "connected entities", which the default
   ofp_phy_port class does not have.
 
@@ -133,7 +130,7 @@ class OpenFlowPort (Port):
     return item in self.entities
 
   def addEntity (self, entity, single = False):
-    # Invariant (not currently enforced?): 
+    # Invariant (not currently enforced?):
     #   len(self.entities) <= 2  ?
     if single:
       self.entities = set([entity])
@@ -142,7 +139,7 @@ class OpenFlowPort (Port):
 
   def to_ofp_phy_port(self):
     return of.ofp_phy_port(port_no = self.number, hw_addr = self.hwAddr,
-                           name = self.name, config = self._config, 
+                           name = self.name, config = self._config,
                            state = self._state)
 
   def __repr__ (self):
@@ -152,15 +149,15 @@ class OpenFlowPort (Port):
 class OpenFlowSwitch (EventMixin, Switch):
   """
   OpenFlowSwitches are Topology entities (inheriting from topology.Switch)
-  
+
   OpenFlowSwitches are persistent; that is, if a switch reconnects, the
   Connection field of the original OpenFlowSwitch object will simply be
   reset to refer to the new connection.
-  
+
   For now, OpenFlowSwitch is primarily a proxy to its underlying connection
   object. Later, we'll possibly add more explicit operations the client can
   perform.
-  
+
   Note that for the purposes of the debugger, we can interpose on
   a switch entity by enumerating all listeners for the events listed
   below, and triggering mock events for those listeners.
@@ -191,7 +188,7 @@ class OpenFlowSwitch (EventMixin, Switch):
     self._listeners = []
     self._reconnectTimeout = None # Timer for reconnection
     self._xid_generator = xid_generator( ((dpid & 0x7FFF) << 16) + 1)
-
+    
   def _setConnection (self, connection, ofp=None):
     ''' ofp - a FeaturesReply message '''
     if self._connection: self._connection.removeListeners(self._listeners)
@@ -206,7 +203,7 @@ class OpenFlowSwitch (EventMixin, Switch):
     if ofp is not None:
       # update capabilities
       self.capabilities = ofp.capabilities
-      # update all ports 
+      # update all ports
       untouched = set(self.ports.keys())
       for p in ofp.ports:
         if p.port_no in self.ports:
@@ -263,7 +260,7 @@ class OpenFlowSwitch (EventMixin, Switch):
     event.halt = False
 
   def findPortForEntity (self, entity):
-    for p in self.ports.itervalues():
+    for p in self.ports.values():
       if entity in p:
         return p
     return None
@@ -289,6 +286,7 @@ class OpenFlowSwitch (EventMixin, Switch):
 
   def __repr__ (self):
     return "<%s %s>" % (self.__class__.__name__, dpidToStr(self.dpid))
+    #+ (" %s"*len(self.ports)) % tuple([(k,str(self.ports[k])) for k in self.ports.keys()])
 
   @property
   def name(self):
@@ -323,7 +321,7 @@ class OFSyncFlowTable (EventMixin):
   def install (self, entries=[]):
     """
     asynchronously install entries in the flow table
-    
+
     will raise a FlowTableModification event when the change has been
     processed by the switch
     """
@@ -332,7 +330,7 @@ class OFSyncFlowTable (EventMixin):
   def remove_with_wildcards (self, entries=[]):
     """
     asynchronously remove entries in the flow table
-    
+
     will raise a FlowTableModification event when the change has been
     processed by the switch
     """
@@ -341,7 +339,7 @@ class OFSyncFlowTable (EventMixin):
   def remove_strict (self, entries=[]):
     """
     asynchronously remove entries in the flow table.
-    
+
     will raise a FlowTableModification event when the change has been
     processed by the switch
     """
@@ -384,15 +382,15 @@ class OFSyncFlowTable (EventMixin):
     if clear:
       self._pending_barrier_to_ops = {}
       self._pending_op_to_barrier = {}
-      self._pending = filter(lambda(op): op[0] == OFSyncFlowTable.ADD,
-                             self._pending)
+      self._pending = [op for op in self._pending
+                       if op[0] == OFSyncFlowTable.ADD]
 
       self.switch.send(of.ofp_flow_mod(command=of.OFPFC_DELETE,
                                        match=of.ofp_match()))
       self.switch.send(of.ofp_barrier_request())
 
-      todo = map(lambda(e): (OFSyncFlowTable.ADD, e),
-                 self.flow_table.entries) + self._pending
+      todo = [(OFSyncFlowTable.ADD, e)
+              for e in self.flow_table.entries] + self._pending
     else:
       todo = [op for op in self._pending
               if op not in self._pending_op_to_barrier

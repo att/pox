@@ -1,19 +1,16 @@
-# Copyright 2011-2013 James McCauley
+# Copyright 2011-2020 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Some of POX's core API and functionality is here, largely in the POXCore
@@ -31,6 +28,7 @@ import logging
 import inspect
 import time
 import os
+import signal
 
 _path = inspect.stack()[0][1]
 _ext_path = _path[0:_path.rindex(os.sep)]
@@ -50,15 +48,37 @@ def getLogger (name=None, moreFrames=0):
   """
   if name is None:
     s = inspect.stack()[1+moreFrames]
+    # Should we always use __name__ instead?
+    fname = s[0].f_globals.get('__file__')
+    matching = False
     name = s[1]
     if name.endswith('.py'):
+      matching = name == fname
       name = name[0:-3]
+    elif name.endswith('.pyo'):
+      matching = name == (fname + "o")
+      name = name[0:-4]
     elif name.endswith('.pyc'):
+      matching = name == (fname + "c")
       name = name[0:-4]
     if name.startswith(_path):
       name = name[len(_path):]
     elif name.startswith(_ext_path):
       name = name[len(_ext_path):]
+    elif not matching:
+      # This may not work right across platforms, so be cautious.
+      n = s[0].f_globals.get('__name__')
+      if n:
+        if n.startswith("pox."): n = n[4:]
+        if n.startswith("ext."): n = n[4:]
+      else:
+        try:
+          n = os.path.basename(name)
+        except Exception:
+          n = ""
+        n = n.replace('\\','/').replace(os.path.sep,'/')
+      if n: name = n
+
     name = name.replace('/', '.').replace('\\', '.') #FIXME: use os.path or whatever
 
     # Remove double names ("topology.topology" -> "topology")
@@ -130,7 +150,8 @@ pox.lib.revent.revent.handleEventException = _revent_exception_hook
 
 class GoingUpEvent (Event):
   """ Fired when system is going up. """
-  pass
+  def get_deferral (self):
+    return self.source._get_go_up_deferral()
 
 class GoingDownEvent (Event):
   """ Fired when system is going down. """
@@ -151,9 +172,12 @@ class ComponentRegistered (Event):
   depends on are available.
   """
   def __init__ (self, name, component):
-    Event.__init__(self)
     self.name = name
     self.component = component
+
+class RereadConfiguration (Event):
+  """ Fired when modules should reread their configuration files. """
+  pass
 
 import pox.lib.recoco as recoco
 
@@ -182,25 +206,39 @@ class POXCore (EventMixin):
     DownEvent,
     GoingUpEvent,
     GoingDownEvent,
-    ComponentRegistered
+    ComponentRegistered,
+    RereadConfiguration,
   ])
 
-  def __init__ (self):
+  version = (0,7,0)
+  version_name = "gar"
+
+  def __init__ (self, threaded_selecthub=True, epoll_selecthub=False,
+                handle_signals=True):
     self.debug = False
     self.running = True
-    self.components = {}
+    self.starting_up = True
+    self.components = {'core':self}
 
-    self.version = (0,1,0)
-    self.version_name = "betta"
+    self._go_up_deferrals = set()
+
+    self._openflow_wanted = False
+    self._handle_signals = handle_signals
+
+    import threading
+    self.quit_condition = threading.Condition()
+
     print(self.banner)
 
-    self.scheduler = recoco.Scheduler(daemon=True)
+    self.scheduler = recoco.Scheduler(daemon=True,
+                                      threaded_selecthub=threaded_selecthub,
+                                      use_epoll=epoll_selecthub)
 
     self._waiters = [] # List of waiting components
 
   @property
   def banner (self):
-    return "{0} / Copyright 2011-2013 James McCauley, et al.".format(
+    return "{0} / Copyright 2011-2020 James McCauley, et al.".format(
      self.version_string)
 
   @property
@@ -208,6 +246,10 @@ class POXCore (EventMixin):
     return "POX %s (%s)" % ('.'.join(map(str,self.version)),self.version_name)
 
   def callDelayed (_self, _seconds, _func, *args, **kw):
+    """ Deprecated """
+    return _self.call_delayed(_seconds, _func, *args, **kw)
+
+  def call_delayed (_self, _seconds, _func, *args, **kw):
     """
     Calls the function at a later time.
     This is just a wrapper around a recoco timer.
@@ -217,6 +259,10 @@ class POXCore (EventMixin):
     return t
 
   def callLater (_self, _func, *args, **kw):
+    """ Deprecated """
+    return _self.call_later(_func, *args, **kw)
+
+  def call_later (_self, _func, *args, **kw):
     # first arg is `_self` rather than `self` in case the user wants
     # to specify self as a keyword argument
     """
@@ -259,28 +305,44 @@ class POXCore (EventMixin):
     Shut down POX.
     """
     import threading
-    if threading.current_thread() is self.scheduler._thread:
+    if (self.starting_up or
+        threading.current_thread() is self.scheduler._thread):
       t = threading.Thread(target=self._quit)
+      t.daemon = True
       t.start()
     else:
       self._quit()
 
   def _quit (self):
-    if self.running:
-      self.running = False
-      log.info("Going down...")
-      import gc
-      gc.collect()
+    # Should probably do locking here
+    if not self.running:
+      return
+    if self.starting_up:
+      # Try again later
+      self.quit()
+      return
+
+    self.running = False
+    log.info("Going down...")
+    import gc
+    gc.collect()
+    try:
       self.raiseEvent(GoingDownEvent())
-      self.callLater(self.scheduler.quit)
-      for i in range(50):
-        if self.scheduler._hasQuit: break
-        gc.collect()
-        time.sleep(.1)
-      if not self.scheduler._allDone:
-        log.warning("Scheduler didn't quit in time")
-      self.raiseEvent(DownEvent())
-      log.info("Down.")
+    except:
+      log.exception("While running GoingDownEvent")
+    self.callLater(self.scheduler.quit)
+    for i in range(50):
+      if self.scheduler._hasQuit: break
+      gc.collect()
+      time.sleep(.1)
+    if not self.scheduler._allDone:
+      log.warning("Scheduler didn't quit in time")
+    self.raiseEvent(DownEvent())
+    log.info("Down.")
+    #logging.shutdown()
+    self.quit_condition.acquire()
+    self.quit_condition.notifyAll()
+    core.quit_condition.release()
 
   def _get_python_version (self):
     try:
@@ -299,6 +361,28 @@ class POXCore (EventMixin):
     except:
       return "Unknown Platform"
 
+  def _add_signal_handlers (self):
+    if not self._handle_signals:
+      return
+
+    import threading
+    # Note, python 3.4 will have threading.main_thread()
+    # http://bugs.python.org/issue18882
+    if not isinstance(threading.current_thread(), threading._MainThread):
+      raise RuntimeError("add_signal_handers must be called from MainThread")
+
+    try:
+      previous = signal.getsignal(signal.SIGHUP)
+      signal.signal(signal.SIGHUP, self._signal_handler_SIGHUP)
+      if previous != signal.SIG_DFL:
+        log.warn('Redefined signal handler for SIGHUP')
+    except (AttributeError, ValueError):
+      # SIGHUP is not supported on some systems (e.g., Windows)
+      log.debug("Didn't install handler for SIGHUP")
+
+  def _signal_handler_SIGHUP (self, signal, frame):
+    self.raiseLater(core, RereadConfiguration)
+
   def goUp (self):
     log.debug(self.version_string + " going up...")
 
@@ -309,17 +393,57 @@ class POXCore (EventMixin):
       vers = '.'.join(platform.python_version().split(".")[:2])
     except:
       vers = 'an unknown version'
-    if vers != "2.7":
+    def vwarn (*args):
       l = logging.getLogger("version")
       if not l.isEnabledFor(logging.WARNING):
         l.setLevel(logging.WARNING)
-      l.warn("POX requires Python 2.7. You're running %s.", vers)
-      l.warn("If you run into problems, try using Python 2.7 or PyPy.")
+      l.warn(*args)
+    good_versions = ("3.6", "3.7", "3.8", "3.9")
+    if vers not in good_versions:
+      vwarn("POX requires one of the following versions of Python: %s",
+             " ".join(good_versions))
+      vwarn("You're running Python %s.", vers)
+      vwarn("If you run into problems, try using a supported version.")
+    else:
+      vwarn("Support for Python 3 is experimental.")
 
+    self.starting_up = False
     self.raiseEvent(GoingUpEvent())
+
+    self._add_signal_handlers()
+
+    if not self._go_up_deferrals:
+      self._goUp_stage2()
+
+  def _get_go_up_deferral (self):
+    """
+    Get a GoingUp deferral
+
+    By doing this, we are deferring progress starting at the GoingUp stage.
+    The return value should be called to allow progress again.
+    """
+    o = object()
+    self._go_up_deferrals.add(o)
+    def deferral ():
+      if o not in self._go_up_deferrals:
+        raise RuntimeError("This deferral has already been executed")
+      self._go_up_deferrals.remove(o)
+      if not self._go_up_deferrals:
+        log.debug("Continuing to go up")
+        self._goUp_stage2()
+
+    return deferral
+
+  def _goUp_stage2 (self):
 
     self.raiseEvent(UpEvent())
 
+    self._waiter_notify()
+
+    if self.running:
+      log.info(self.version_string + " is up.")
+
+  def _waiter_notify (self):
     if len(self._waiters):
       waiting_for = set()
       for entry in self._waiters:
@@ -334,13 +458,12 @@ class POXCore (EventMixin):
       #         % (names, waiting_for))
       log.warn("Still waiting on %i component(s)" % (len(waiting_for),))
 
-    if self.running:
-      log.info(self.version_string + " is up.")
-
   def hasComponent (self, name):
     """
     Returns True if a component with the given name has been registered.
     """
+    if name in ('openflow', 'OpenFlowConnectionArbiter'):
+      self._openflow_wanted = True
     return name in self.components
 
   def registerNew (self, __componentClass, *args, **kw):
@@ -380,13 +503,16 @@ class POXCore (EventMixin):
     self.components[name] = component
     self.raiseEventNoErrors(ComponentRegistered, name, component)
     self._try_waiters()
-    
+
   def call_when_ready (self, callback, components=[], name=None, args=(),
                        kw={}):
     """
     Calls a callback when components are ready.
     """
-    if isinstance(components, basestring):
+    if callback is None:
+      callback = lambda:None
+      callback.__name__ = "<None>"
+    if isinstance(components, str):
       components = [components]
     elif isinstance(components, set):
       components = list(components)
@@ -398,13 +524,13 @@ class POXCore (EventMixin):
         components = [components]
     if name is None:
       #TODO: Use inspect here instead
-      name = getattr(callback, 'func_name')
+      name = getattr(callback, '__name__')
       if name is None:
         name = str(callback)
       else:
         name += "()"
-        if hasattr(callback, 'im_class'):
-          name = getattr(callback.im_class,'__name__', '') + '.' + name
+        if hasattr(callback, '__self__'):
+          name = getattr(callback.__self__.__class__,'__name__','')+'.'+name
       if hasattr(callback, '__module__'):
         # Is this a good idea?  If not here, we should do it in the
         # exception printing in try_waiter().
@@ -448,7 +574,7 @@ class POXCore (EventMixin):
     Tries to satisfy all component-waiting callbacks
     """
     changed = True
-    
+
     while changed:
       changed = False
       for entry in list(self._waiters):
@@ -470,7 +596,7 @@ class POXCore (EventMixin):
     2) Call "_all_dependencies_met" on *sink* if it exists
     3) If attrs=True, set attributes on *sink* for each component
        (e.g, sink._openflow_ would be set to core.openflow)
-    
+
     For example, if topology is a dependency, a handler for topology's
     SwitchJoin event must be defined as so:
        def _handle_topology_SwitchJoin (self, ...):
@@ -480,7 +606,7 @@ class POXCore (EventMixin):
     """
     if components is None:
       components = set()
-    elif isinstance(components, basestring):
+    elif isinstance(components, str):
       components = set([components])
     else:
       components = set(components)
@@ -494,7 +620,7 @@ class POXCore (EventMixin):
     if None in listen_args:
       # This means add it to all...
       args = listen_args.pop(None)
-      for k,v in args.iteritems():
+      for k,v in args.items():
         for c in components:
           if c not in listen_args:
             listen_args[c] = {}
@@ -524,10 +650,37 @@ class POXCore (EventMixin):
     self.call_when_ready(done, components, name=sink.__class__.__name__,
                          args=(sink,components,attrs,short_attrs))
 
+    if not self.starting_up:
+      self._waiter_notify()
 
   def __getattr__ (self, name):
-    if name not in self.components:
-      raise AttributeError("'%s' not registered" % (name,))
-    return self.components[name]
+    if name in ('openflow', 'OpenFlowConnectionArbiter'):
+      self._openflow_wanted = True
+    c = self.components.get(name)
+    if c is not None: return c
+    raise AttributeError("'%s' not registered" % (name,))
 
-core = POXCore()
+
+core = None
+
+def initialize (threaded_selecthub=True, epoll_selecthub=False,
+                handle_signals=True):
+  global core
+  core = POXCore(threaded_selecthub=threaded_selecthub,
+                 epoll_selecthub=epoll_selecthub,
+                 handle_signals=handle_signals)
+  return core
+
+# The below is a big hack to make tests and doc tools work.
+# We should do something better.
+def _maybe_initialize ():
+  import sys
+  if 'unittest' in sys.modules or 'nose' in sys.modules:
+    initialize()
+    return
+  import __main__
+  mod = getattr(__main__, '__file__', '')
+  if 'pydoc' in mod or 'pdoc' in mod:
+    initialize()
+    return
+_maybe_initialize()

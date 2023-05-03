@@ -1,19 +1,16 @@
-# Copyright 2012 James McCauley
+# Copyright 2012-2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 A shortest-path forwarding application.
@@ -78,13 +75,13 @@ def _calc_paths ():
         a = path_map[i][j][0]
         #a = adjacency[i][j]
         if a is None: a = "*"
-        print a,
-      print
+        print(a, end=' ')
+      print()
 
   sws = switches.values()
   path_map.clear()
   for k in sws:
-    for j,port in adjacency[k].iteritems():
+    for j,port in adjacency[k].items():
       if port is None: continue
       path_map[k][j] = (1,None)
     path_map[k][k] = (0,None) # distance, intermediate
@@ -133,7 +130,7 @@ def _check_path (p):
   for a,b in zip(p[:-1],p[1:]):
     if adjacency[a[0]][b[0]] != a[2]:
       return False
-    if adjacency[b[0]][a[0]] != b[2]:
+    if adjacency[b[0]][a[0]] != b[1]:
       return False
   return True
 
@@ -226,7 +223,6 @@ class PathInstalled (Event):
   Fired when a path is installed
   """
   def __init__ (self, path):
-    Event.__init__(self)
     self.path = path
 
 
@@ -351,23 +347,28 @@ class Switch (EventMixin):
         log.debug("Learned %s at %s.%i", packet.src, loc[0], loc[1])
     elif oldloc != loc:
       # ethaddr seen at different place!
-      if loc[1] not in adjacency[loc[0]].values():
+      if core.openflow_discovery.is_edge_port(loc[0].dpid, loc[1]):
         # New place is another "plain" port (probably)
         log.debug("%s moved from %s.%i to %s.%i?", packet.src,
-                  dpid_to_str(oldloc[0].connection.dpid), oldloc[1],
-                  dpid_to_str(   loc[0].connection.dpid),    loc[1])
+                  dpid_to_str(oldloc[0].dpid), oldloc[1],
+                  dpid_to_str(   loc[0].dpid),    loc[1])
         if packet.src.is_multicast == False:
           mac_map[packet.src] = loc # Learn position for ethaddr
           log.debug("Learned %s at %s.%i", packet.src, loc[0], loc[1])
       elif packet.dst.is_multicast == False:
         # New place is a switch-to-switch port!
-        #TODO: This should be a flood.  It'd be nice if we knew.  We could
-        #      check if the port is in the spanning tree if it's available.
-        #      Or maybe we should flood more carefully?
-        log.warning("Packet from %s arrived at %s.%i without flow",
-                    packet.src, dpid_to_str(self.dpid), event.port)
-        #drop()
-        #return
+        # Hopefully, this is a packet we're flooding because we didn't
+        # know the destination, and not because it's somehow not on a
+        # path that we expect it to be on.
+        # If spanning_tree is running, we might check that this port is
+        # on the spanning tree (it should be).
+        if packet.dst in mac_map:
+          # Unfortunately, we know the destination.  It's possible that
+          # we learned it while it was in flight, but it's also possible
+          # that something has gone wrong.
+          log.warning("Packet from %s to known destination %s arrived "
+                      "at %s.%i without flow", packet.src, packet.dst,
+                      dpid_to_str(self.dpid), event.port)
 
 
     if packet.dst.is_multicast:
@@ -419,13 +420,10 @@ class l2_multi (EventMixin):
   ])
 
   def __init__ (self):
-    # Listen to dependencies
-    def startup ():
-      core.openflow.addListeners(self, priority=0)
-      core.openflow_discovery.addListeners(self)
-    core.call_when_ready(startup, ('openflow','openflow_discovery'))
+    # Listen to dependencies (specifying priority 0 for openflow)
+    core.listen_to_dependencies(self, listen_args={'openflow':{'priority':0}})
 
-  def _handle_LinkEvent (self, event):
+  def _handle_openflow_discovery_LinkEvent (self, event):
     def flip (link):
       return Discovery.Link(link[2],link[3], link[0],link[1])
 
@@ -440,7 +438,7 @@ class l2_multi (EventMixin):
     # path that may have been broken.
     #NOTE: This could be radically improved! (e.g., not *ALL* paths break)
     clear = of.ofp_flow_mod(command=of.OFPFC_DELETE)
-    for sw in switches.itervalues():
+    for sw in switches.values():
       if sw.connection is None: continue
       sw.connection.send(clear)
     path_map.clear()
@@ -452,6 +450,7 @@ class l2_multi (EventMixin):
 
       # But maybe there's another way to connect these...
       for ll in core.openflow_discovery.adjacency:
+        if ll == event.link: continue
         if ll.dpid1 == l.dpid1 and ll.dpid2 == l.dpid2:
           if flip(ll) in core.openflow_discovery.adjacency:
             # Yup, link goes both ways
@@ -474,20 +473,14 @@ class l2_multi (EventMixin):
       # If we have learned a MAC on this port which we now know to
       # be connected to a switch, unlearn it.
       bad_macs = set()
-      for mac,(sw,port) in mac_map.iteritems():
-        #print sw,sw1,port,l.port1
-        if sw is sw1 and port == l.port1:
-          if mac not in bad_macs:
-            log.debug("Unlearned %s", mac)
-            bad_macs.add(mac)
-        if sw is sw2 and port == l.port2:
-          if mac not in bad_macs:
-            log.debug("Unlearned %s", mac)
-            bad_macs.add(mac)
+      for mac,(sw,port) in mac_map.items():
+        if sw is sw1 and port == l.port1: bad_macs.add(mac)
+        if sw is sw2 and port == l.port2: bad_macs.add(mac)
       for mac in bad_macs:
+        log.debug("Unlearned %s", mac)
         del mac_map[mac]
 
-  def _handle_ConnectionUp (self, event):
+  def _handle_openflow_ConnectionUp (self, event):
     sw = switches.get(event.dpid)
     if sw is None:
       # New switch
@@ -497,7 +490,7 @@ class l2_multi (EventMixin):
     else:
       sw.connect(event.connection)
 
-  def _handle_BarrierIn (self, event):
+  def _handle_openflow_BarrierIn (self, event):
     wp = waiting_paths.pop((event.dpid,event.xid), None)
     if not wp:
       #log.info("No waiting packet %s,%s", event.dpid, event.xid)

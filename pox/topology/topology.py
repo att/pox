@@ -1,19 +1,16 @@
 # Copyright 2011 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 The Topology module is the root of an object model composed of entities
@@ -35,7 +32,6 @@ import pickle
 
 class EntityEvent (Event):
   def __init__ (self, entity):
-    Event.__init__(self)
     self.entity = entity
 
 class EntityJoin (EntityEvent):
@@ -97,7 +93,6 @@ class Update (Event):
   Fired by Topology whenever anything has changed
   """
   def __init__ (self, event=None):
-    Event.__init__(self)
     self.event = event
 
 class Entity (object):
@@ -124,7 +119,7 @@ class Entity (object):
   def __init__ (self, id=None):
     if id:
       if id in Entity._all_ids:
-        print("".join(traceback.format_list(self._tb[id])))
+        print(("".join(traceback.format_list(self._tb[id]))))
         raise Exception("ID %s already taken" % str(id))
     else:
       while Entity._next_id in Entity._all_ids:
@@ -134,6 +129,11 @@ class Entity (object):
     self._tb[id] = traceback.extract_stack()
     Entity._all_ids.add(id)
     self.id = id
+
+  def __gt__(self,other):
+    if not isinstance(other,Entity):
+      return Exception("Uncomparable types")
+    return str(self.id)<str(other)
 
   def serialize(self):
     return pickle.dumps(self, protocol = 0)
@@ -149,6 +149,9 @@ class Host (Entity):
   def __init__(self,id=None):
     Entity.__init__(self, id)
 
+  def __repr__(self):
+   return "<%s %s>" % (self.__class__.__name__, str(self.id))
+ 
 class Switch (Entity):
   """
   Subclassed by protocol-specific switch classes,
@@ -184,7 +187,6 @@ class Topology (EventMixin):
     HostLeave,
     EntityJoin,
     EntityLeave,
-
     Update
   ]
 
@@ -200,7 +202,8 @@ class Topology (EventMixin):
     # already occurred, we promise to re-issue them to the newly joined
     # client.
     self._event_promises = {
-      SwitchJoin : self._fulfill_SwitchJoin_promise
+      SwitchJoin : self._fulfill_SwitchJoin_promise,
+      HostJoin : self._fulfill_HostJoin_promise
     }
 
   def getEntityByID (self, ID, fail=False):
@@ -238,9 +241,9 @@ class Topology (EventMixin):
 
   def getEntitiesOfType (self, t=Entity, subtypes=True):
     if subtypes is False:
-      return [x for x in self._entities.itervalues() if type(x) is t]
+      return [x for x in self._entities.values() if type(x) is t]
     else:
-      return [x for x in self._entities.itervalues() if isinstance(x, t)]
+      return [x for x in self._entities.values() if isinstance(x, t)]
 
   def addListener(self, eventType, handler, once=False, weak=False,
                   priority=None, byName=False):
@@ -306,6 +309,11 @@ class Topology (EventMixin):
     for switch in self.getEntitiesOfType(Switch, True):
       handler(SwitchJoin(switch))
 
+  # added
+  def _fulfill_HostJoin_promise(self,handler):
+    for host in self.getEntitiesOfType(Host,True):
+      handler(HostJoin(host))
+
   def __len__(self):
     return len(self._entities)
 
@@ -313,7 +321,7 @@ class Topology (EventMixin):
     # TODO: display me graphically
     strings = []
     strings.append("topology (%d total entities)" % len(self._entities))
-    for id,entity in self._entities.iteritems():
+    for id,entity in self._entities.items():
       strings.append("%s %s" % (str(id), str(entity)))
 
     return '\n'.join(strings)

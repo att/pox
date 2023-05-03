@@ -1,19 +1,16 @@
 # Copyright 2012,2013 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Creates a spanning tree.
@@ -102,7 +99,7 @@ def _calc_spanning_tree ():
     v = q.pop(False)
     if v in done: continue
     done.add(v)
-    for w,p in adj[v].iteritems():
+    for w,p in adj[v].items():
       if w in tree: continue
       more.add(w)
       tree[v].add((w,p))
@@ -110,7 +107,7 @@ def _calc_spanning_tree ():
 
   if False:
     log.debug("*** SPANNING TREE ***")
-    for sw,ports in tree.iteritems():
+    for sw,ports in tree.items():
       #print " ", dpidToStr(sw), ":", sorted(list(ports))
       #print " ", sw, ":", [l[0] for l in sorted(list(ports))]
       log.debug((" %i : " % sw) + " ".join([str(l[0]) for l in
@@ -141,7 +138,7 @@ def _handle_ConnectionUp (event):
   if _noflood_by_default:
     con = event.connection
     log.debug("Disabling flooding for %i ports", len(con.ports))
-    for p in con.ports.itervalues():
+    for p in con.ports.values():
       if p.port_no >= of.OFPP_MAX: continue
       _prev[con.dpid][p.port_no] = False
       pm = of.ofp_port_mod(port_no=p.port_no,
@@ -158,6 +155,14 @@ def _handle_ConnectionUp (event):
 
 def _handle_LinkEvent (event):
   # When links change, update spanning tree
+
+  (dp1,p1),(dp2,p2) = event.link.end
+  if _prev[dp1][p1] is False:
+    if _prev[dp2][p2] is False:
+      # We're disabling this link; who cares if it's up or down?
+      #log.debug("Ignoring link status for %s", event.link)
+      return
+
   _update_tree()
 
 
@@ -181,7 +186,7 @@ def _update_tree (force_dpid = None):
   # Now modify ports as needed
   try:
     change_count = 0
-    for sw, ports in tree.iteritems():
+    for sw, ports in tree.items():
       con = core.openflow.getConnection(sw)
       if con is None: continue # Must have disconnected
       if con.connect_time is None: continue # Not fully connected
@@ -196,7 +201,7 @@ def _update_tree (force_dpid = None):
             continue
 
       tree_ports = [p[1] for p in ports]
-      for p in con.ports.itervalues():
+      for p in con.ports.values():
         if p.port_no < of.OFPP_MAX:
           flood = p.port_no in tree_ports
           if not flood:
@@ -271,4 +276,3 @@ def launch (no_flood = False, hold_down = False):
     core.openflow_discovery.addListenerByName("LinkEvent", _handle_LinkEvent)
     log.debug("Spanning tree component ready")
   core.call_when_ready(start_spanning_tree, "openflow_discovery")
-

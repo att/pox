@@ -1,19 +1,16 @@
-# Copyright 2011 James McCauley
+# Copyright 2011-2012 James McCauley
 #
-# This file is part of POX.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
 #
-# POX is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# POX is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with POX.  If not, see <http://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 An L2 learning switch.
@@ -25,7 +22,7 @@ exact-match rules for each flow.
 
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
-from pox.lib.util import dpid_to_str
+from pox.lib.util import dpid_to_str, str_to_dpid
 from pox.lib.util import str_to_bool
 import time
 
@@ -181,16 +178,26 @@ class l2_learning (object):
   """
   Waits for OpenFlow switches to connect and makes them learning switches.
   """
-  def __init__ (self, transparent):
+  def __init__ (self, transparent, ignore = None):
+    """
+    Initialize
+
+    See LearningSwitch for meaning of 'transparent'
+    'ignore' is an optional list/set of DPIDs to ignore
+    """
     core.openflow.addListeners(self)
     self.transparent = transparent
+    self.ignore = set(ignore) if ignore else ()
 
   def _handle_ConnectionUp (self, event):
+    if event.dpid in self.ignore:
+      log.debug("Ignoring connection %s" % (event.connection,))
+      return
     log.debug("Connection %s" % (event.connection,))
     LearningSwitch(event.connection, self.transparent)
 
 
-def launch (transparent=False, hold_down=_flood_delay):
+def launch (transparent=False, hold_down=_flood_delay, ignore = None):
   """
   Starts an L2 learning switch.
   """
@@ -201,4 +208,8 @@ def launch (transparent=False, hold_down=_flood_delay):
   except:
     raise RuntimeError("Expected hold-down to be a number")
 
-  core.registerNew(l2_learning, str_to_bool(transparent))
+  if ignore:
+    ignore = ignore.replace(',', ' ').split()
+    ignore = set(str_to_dpid(dpid) for dpid in ignore)
+
+  core.registerNew(l2_learning, str_to_bool(transparent), ignore)
